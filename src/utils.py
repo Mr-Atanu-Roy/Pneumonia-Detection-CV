@@ -1,8 +1,10 @@
-import torch
 import random
-import numpy as np
 
-def set_seeds(seed: int=42)->None:
+import numpy as np
+import torch
+
+
+def set_seeds(seed: int = 42) -> None:
     """
     Sets seed across all libraries for full reproducibility.
     Args:
@@ -17,6 +19,7 @@ def set_seeds(seed: int=42)->None:
 
 
 from collections import Counter
+
 
 def get_loader_distribution(loader: torch.utils.data.DataLoader):
     """
@@ -35,3 +38,29 @@ def get_loader_distribution(loader: torch.utils.data.DataLoader):
         counter.update(labels.tolist())
 
     return counter
+
+
+# ── Cell 3: WandB login ─────────────────────────────────────────────
+import wandb
+
+
+def wandb_login(platform: str) -> None:
+    """
+    Logs into WandB in a platform-appropriate way.
+
+    On Colab : interactive browser-based login (wandb.login() with no args)
+    On Kaggle: reads API key from Kaggle Secrets
+
+    Args:
+        platform : "colab" or "kaggle"
+    """
+    if platform == "colab":
+        wandb.login()
+
+    elif platform == "kaggle":
+        from kaggle_secrets import UserSecretsClient
+
+        api_key = UserSecretsClient().get_secret("WANDB_API_KEY")
+        wandb.login(key=api_key)
+
+    print("[INFO] WandB login successful.")
