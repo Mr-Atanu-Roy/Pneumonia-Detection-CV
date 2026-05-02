@@ -5,68 +5,89 @@ Contains:
 """
 
 import shutil
-import os
-import kagglehub
 from pathlib import Path
 
-def download_data(target_dir: str) -> Path:
+import kagglehub
+
+
+def download_data(target_dir: str, platform: str) -> Path:
     """
-    Download the data from Kaggle using kagglehub, moves the train, test data it to target_dir. Merge the val and train data and returns the path where train, test splits are placed.
+    Prepares the chest X-ray dataset at target_dir with train/ and test/ splits,
+    merging the original val/ images into train/.
+
+    On Colab  : downloads from Kaggle via kagglehub, then copies and organizes.
+    On Kaggle : dataset is pre-mounted at /kaggle/input/ — copies and organizes
+                directly from there (no download needed).
+
+    The copy + val-merge logic is identical for both platforms.
+    Only the source path differs.
 
     Args:
-        - target_dir (str): local path where the data will be stored
+        target_dir : path where the organized dataset will be placed
+        platform   : "colab" or "kaggle"
+
     Returns:
-        - Path: path where the train, test, val splits are placed
+        Path : path to the organized chest_xray/ directory containing
+               train/ and test/ splits. Returns None on failure.
     """
-
     target_dir = Path(target_dir)
-
-    # The final location where train, test, val splits will be placed
     final_data_path = target_dir / "chest_xray"
 
-    #1. Check if the final organized data already exists
+    # ── 1. Early exit: data already organized
     if (final_data_path / "train").exists():
-        print(f"[INFO] Dataset already exists at {final_data_path}. Skipping download...")
+        print(
+            f"[INFO] Dataset already exists at {final_data_path}. Skipping.Download.."
+        )
         return final_data_path
 
-    # 2. Create target directory if it doesn't exist
-    if not target_dir.exists():
-        print(f"[INFO] Creating directory at {target_dir}...")
-        target_dir.mkdir(parents=True, exist_ok=True)
+    # 2. Create target directory
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        print("[INFO] Starting download from Kaggle via kagglehub...")
-        # kagglehub downloads and unzipping into a global cache
-        cache_path = Path(kagglehub.dataset_download("paultimothymooney/chest-xray-pneumonia"))
+        # 3. Resolve source path (platform-dependent)
+        if platform == "colab":
+            # kagglehub downloads into a global cache and returns its path
+            print("[INFO] Downloading dataset from Kaggle via kagglehub...")
+            cache_path = Path(
+                kagglehub.dataset_download("paultimothymooney/chest-xray-pneumonia")
+            )
+            # The zip has a nested structure: chest_xray/chest_xray/[train, test, val]
+            source_content_path = cache_path / "chest_xray" / "chest_xray"
+            print("[INFO] Download complete.")
 
-        # 3. Define the source of the nested mess in the cache
-        # The structure in this specific zip is: chest_xray/chest_xray/[train, test, val]
-        source_content_path = cache_path / "chest_xray" / "chest_xray"
+        elif platform == "kaggle":
+            # Dataset is pre-mounted — no download needed
+            # Structure: /kaggle/input/chest-xray-pneumonia/chest_xray/[train, test, val]
+            source_content_path = Path("/kaggle/input/chest-xray-pneumonia/chest_xray")
+            print(f"[INFO] Using pre-mounted dataset at {source_content_path}")
 
-        print(f"[INFO] Finished Downloading.")
-        print(f"[INFO] Organizing and moving data to {final_data_path}...")
+        # 4. Validate source exists before proceeding
+        if not source_content_path.exists():
+            raise FileNotFoundError(
+                f"[ERROR] Source data not found at {source_content_path}. "
+                f"On Kaggle, ensure the dataset 'paultimothymooney/chest-xray-pneumonia' "
+                f"is added as input to this notebook."
+            )
 
-        # Create the final folder if it doesn't exist
+        # 5. Copy train/ and test/ from source to target_dir
+        # (identical for both platforms from this point onward)
+        print(f"[INFO] Organizing data into {final_data_path}...")
         final_data_path.mkdir(parents=True, exist_ok=True)
 
-        # 4. Move train, test folders from cache to target_dir. Merge train and val
         for split in ["train", "test"]:
             src = source_content_path / split
             dst = final_data_path / split
 
             if src.exists():
-                # If the destination already exists: remove old data and move the new data
                 if dst.exists():
                     shutil.rmtree(dst)
-
-                # Copy from cache to dest
                 shutil.copytree(src, dst)
-                print(f"[INFO] Successfully moved {split} split.")
+                print(f"[INFO] Copied '{split}' split successfully.")
 
-        # Merge val/NORMAL and val/PNEUMONIA into train/NORMAL and train/PNEUMONIA respectively
+        # 6. Merge val/ into train/
         val_src = source_content_path / "val"
         if val_src.exists():
-            for class_dir in val_src.iterdir():          # NORMAL, PNEUMONIA
+            for class_dir in val_src.iterdir():  # NORMAL, PNEUMONIA
                 if class_dir.is_dir():
                     train_class_dst = final_data_path / "train" / class_dir.name
                     train_class_dst.mkdir(parents=True, exist_ok=True)
@@ -76,26 +97,27 @@ def download_data(target_dir: str) -> Path:
                         # Rename on collision to avoid silent overwrites
                         if dst_file.exists():
                             dst_file = train_class_dst / f"val_{img_file.name}"
-
                         shutil.copy2(img_file, dst_file)
 
-            print("[INFO] Successfully merged val and train splits.")
+            print("[INFO] Merged val/ into train/ successfully.")
 
-
-        print("[SUCCESS]  Dataset organized.")
+        print(f"[SUCCESS] Dataset ready at: {final_data_path}")
 
     except Exception as e:
-        print(f"[ERROR] An error occurred: {e}")
+        print(f"[ERROR] {e}")
         return None
 
-    print(f"[INFO] Data directory is ready at: {final_data_path}")
     return final_data_path
 
-import torch
+
+from typing import Any, Callable
+
 import numpy as np
-from typing import Callable, Any
+import torch
 from PIL import Image
+
 from .transform import basic_transform
+
 
 class ChestXRayDataset(torch.utils.data.Dataset):
     """
@@ -107,16 +129,20 @@ class ChestXRayDataset(torch.utils.data.Dataset):
         - The base ImageFolder must be created with transform=None to avoid double-transform issues.
     """
 
-    def __init__(self,
-                 dataset: torch.utils.data.Dataset,
-                 transform:  Callable[[Any], Any]=basic_transform) -> None:
+    def __init__(
+        self,
+        dataset: torch.utils.data.Dataset,
+        transform: Callable[[Any], Any] = basic_transform,
+    ) -> None:
 
         self.dataset = dataset
         self.transform = transform
 
         if isinstance(self.dataset, torch.utils.data.Subset):
             # dataset is an instance of Subset class
-            self.samples = [self.dataset.dataset.samples[i] for i in self.dataset.indices]
+            self.samples = [
+                self.dataset.dataset.samples[i] for i in self.dataset.indices
+            ]
             self.class_to_idx = self.dataset.dataset.class_to_idx
             self.classes = self.dataset.dataset.classes
 
@@ -136,6 +162,6 @@ class ChestXRayDataset(torch.utils.data.Dataset):
         image = np.array(Image.open(img_path).convert("RGB"))
 
         # apply transform
-        image = self.transform(image=image)["image"]    #return Tensor obj (C, H, W)
+        image = self.transform(image=image)["image"]  # return Tensor obj (C, H, W)
 
         return image, label
