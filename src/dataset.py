@@ -58,7 +58,9 @@ def download_data(target_dir: str, platform: str) -> Path:
         elif platform == "kaggle":
             # Dataset is pre-mounted — no download needed
             # Structure: /kaggle/input/chest-xray-pneumonia/chest_xray/[train, test, val]
-            source_content_path = Path("/kaggle/input/chest-xray-pneumonia/chest_xray")
+            source_content_path = Path(
+                "/kaggle/input/datasets/paultimothymooney/chest-xray-pneumonia/chest_xray"
+            )
             print(f"[INFO] Using pre-mounted dataset at {source_content_path}")
 
         # 4. Validate source exists before proceeding
