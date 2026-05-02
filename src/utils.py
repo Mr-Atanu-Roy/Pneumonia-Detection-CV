@@ -40,27 +40,29 @@ def get_loader_distribution(loader: torch.utils.data.DataLoader):
     return counter
 
 
-# ── Cell 3: WandB login ─────────────────────────────────────────────
 import wandb
 
 
 def wandb_login(platform: str) -> None:
     """
-    Logs into WandB in a platform-appropriate way.
-
-    On Colab : interactive browser-based login (wandb.login() with no args)
-    On Kaggle: reads API key from Kaggle Secrets
+    Logs into WandB using the API key stored in the environment or secrets manager, depending on the platform.
 
     Args:
         platform : "colab" or "kaggle"
     """
     if platform == "colab":
-        wandb.login()
+        from google.colab import userdata
+
+        api_key = userdata.get("WANDB_API_KEY")
 
     elif platform == "kaggle":
         from kaggle_secrets import UserSecretsClient
 
         api_key = UserSecretsClient().get_secret("WANDB_API_KEY")
-        wandb.login(key=api_key)
+
+    else:
+        raise ValueError(f"Unsupported platform: {platform}")
+
+    wandb.login(key=api_key)
 
     print("[INFO] WandB login successful.")
