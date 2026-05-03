@@ -24,6 +24,31 @@ import argparse
 from src.utils import load_config
 
 
+def _int_or_auto(value: str) -> int | str:
+    """
+    Accepts either an integer string ("4") or the literal "auto".
+    Used for arguments that can be auto-resolved at runtime.
+    Used for num_workers and persistent_workers.
+
+    Args:
+        value: raw string from argparse
+
+    Returns:
+        int if value is a valid integer, "auto" if value is "auto"
+
+    Raises:
+        argparse.ArgumentTypeError: if value is neither an int nor "auto"
+    """
+    if value == "auto":
+        return "auto"
+    try:
+        return int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"Invalid value '{value}'. Expected an integer or 'auto'."
+        )
+
+
 def parse_args(cfg: dict) -> argparse.Namespace:
     """
     Parse CLI arguments. Defaults are loaded from config.yaml
@@ -100,14 +125,14 @@ def parse_args(cfg: dict) -> argparse.Namespace:
     )
     parser.add_argument(
         "--num-workers",
-        type=int,
+        type=_int_or_auto,
         default=c_dl["num_workers"]
         or "auto",  # auto is resolved in main function later
         help="Number of dataloader worker processes.",
     )
     parser.add_argument(
         "--persistent-workers",
-        type=int,
+        type=_int_or_auto,
         default=c_dl["persistent_workers"]
         or "auto",  # auto is resolved in main function later
         help="Whether to use persistent workers in dataloaders (set True if num_workers > 0, else False).",
