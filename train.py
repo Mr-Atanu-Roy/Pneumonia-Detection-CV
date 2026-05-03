@@ -166,10 +166,10 @@ def parse_args(cfg: dict) -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--n-layers",
+        "--num-classes",
         type=int,
-        default=c_model["n_layers"],
-        help="Number of backbone blocks to unfreeze for fine-tuning (Case B and D).",
+        default=c_model["num_classes"],
+        help="Number of classes for the classification task. 1 for binary classification, >2 for multi-class classification.",
     )
 
     parser.add_argument(
