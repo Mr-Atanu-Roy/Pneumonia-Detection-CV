@@ -76,6 +76,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 import torch
+import yaml
 
 from ..dataloader import create_dataloaders, get_class_weights
 from ..models.models import create_model, create_optimizer, unfreeze_for_finetune
@@ -87,25 +88,61 @@ from .transfer_learning_experiment import run_transfer_learning_experiment
 set_seeds()
 
 
-# NOTE: later update this constants from .yaml file.
-_project_name = "pneumonia-detection"
+def _loss_fn(name="binary_ce", pos_weight: Optional[float] = None):
+    """
+    Creates and returns the loss function based on the given name.
 
-_train_val_dir = "/content/drive/MyDrive/Colab Notebooks/My Projects/Pneumonia Detection/data/chest_xray/train"
-_artifacts_dir = "/content/drive/MyDrive/Colab Notebooks/My Projects/Pneumonia Detection/artifacts/models"
+    Raises:
+        - ValueError if name is not a supported loss function.
+    """
 
-_batch_size = 32
-_val_size = 0.2
-_epochs = 5
+    if name == "binary_ce":
+        return torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
-_device = "cuda" if torch.cuda.is_available() else "cpu"
-_num_workers = os.cpu_count()
+    raise ValueError(f"Unknown loss function: '{name}'. Available: ['binary_ce']")
 
-_tf_lr = 1e-3
-_ft_lr = 1e-5
-_lr_decay = 0.2
-_n_layers = 1
 
-_pos_weight = 0.673
+def _load_config() -> Dict[str, Any]:
+    """
+    Loads config.yaml from the repo root (two levels up from this file).
+    src/trainer/experiment.py → src/trainer/ → src/ → repo root
+    Note:
+        - Run the update_yaml_config() in src.utils before this to update the config.yaml.
+        - This function can be used only from this file as the yaml file is expected to be at a fixed path relative to this file.
+
+    Raises:
+        FileNotFoundError: if config.yaml is not found at the expected path
+    """
+    config_path = Path(__file__).resolve().parents[2] / "config.yaml"
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"[ERROR] config.yaml not found at {config_path}. "
+            f"Ensure it exists in the repo root."
+        )
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
+
+
+_cfg = _load_config()
+
+_project_name = _cfg["wandb"]["project_name"]
+
+_train_val_dir = _cfg["paths"]["train_val_dir"]
+_artifacts_dir = _cfg["paths"]["artifacts_dir"]
+
+_val_size = _cfg["data"]["val_size"]
+_pos_weight = _cfg["data"]["pos_weight"]
+
+_batch_size = _cfg["dataloader"]["batch_size"]
+_num_workers = _cfg["dataloader"]["num_workers"]
+
+_epochs = _cfg["training"]["epochs"]
+_device = _cfg["training"]["device"]
+
+_tf_lr = _cfg["optimizer"]["tf_lr"]
+_ft_lr = _cfg["optimizer"]["ft_lr"]
+_lr_decay = _cfg["optimizer"]["lr_decay"]
+_n_layers = _cfg["optimizer"]["n_layers"]
 
 
 def run_experiment(
@@ -343,17 +380,3 @@ def run_experiment(
         project_name=project_name,
         device=device,
     )
-
-
-def _loss_fn(name="binary_ce", pos_weight: Optional[float] = None):
-    """
-    Creates and returns the loss function based on the given name.
-
-    Raises:
-        - ValueError if name is not a supported loss function.
-    """
-
-    if name == "binary_ce":
-        return torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-
-    raise ValueError(f"Unknown loss function: '{name}'. Available: ['binary_ce']")

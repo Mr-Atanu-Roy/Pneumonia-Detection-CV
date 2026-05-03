@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 import torch
 
 from ..models.models import create_optimizer, unfreeze_for_finetune
-from ..utils import build_config, build_ft_suffix, build_tl_run_name
+from ..utils import build_ft_suffix, build_tl_run_name, build_wandb_config
 from .fine_tuning_experiment import run_fine_tuning
 from .loop import train
 
@@ -56,7 +56,7 @@ def run_transfer_learning_experiment(
         ft_run_name = tl_run_name + build_ft_suffix(ft_lr, ft_epochs, n_layers)
 
     # wandb config
-    tl_config = build_config(
+    tl_config = build_wandb_config(
         model_name=model_name,
         mode="transfer_learning",
         epochs=epochs,

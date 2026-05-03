@@ -111,7 +111,7 @@ def build_standalone_ft_run_name(
     return f"{model_name.lower()}-FT_LR{fmt_lr(ft_lr)}-EP{ft_epochs}-N_LY{n_layers}"
 
 
-def build_config(
+def build_wandb_config(
     model_name: str,
     mode: str,
     epochs: int,
@@ -142,3 +142,25 @@ def build_config(
     if extra:
         config.update(extra)
     return config
+
+
+import yaml
+
+
+def update_yaml_config(config_path: str, updates: Dict[str, Any]) -> None:
+    """
+    Updates a YAML config file with the provided dictionary of updates.
+
+    Args:
+        - config_path (str): path to the YAML config file to be updated
+        - updates (Dict[str, Any]): dictionary containing the keys and values to update in the config file
+    """
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+
+    config.update(updates)
+
+    with open(config_path, "w") as f:
+        yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
+
+    print("[INFO] Config file updated successfully.")

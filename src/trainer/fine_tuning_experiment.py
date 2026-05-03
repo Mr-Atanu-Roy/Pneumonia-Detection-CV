@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 import torch
 
-from ..utils import build_config, build_ft_suffix, build_standalone_ft_run_name
+from ..utils import build_ft_suffix, build_standalone_ft_run_name, build_wandb_config
 from .loop import train
 
 
@@ -69,7 +69,7 @@ def run_fine_tuning_experiment(
         )
 
     # WandB config
-    ft_config = build_config(
+    ft_config = build_wandb_config(
         model_name=model_name,
         mode="fine_tuning",
         epochs=ft_epochs,
