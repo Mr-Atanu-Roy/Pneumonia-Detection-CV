@@ -9,7 +9,7 @@ import torch
 
 from ..models.models import create_optimizer, unfreeze_for_finetune
 from ..utils import build_ft_suffix, build_tl_run_name, build_wandb_config
-from .fine_tuning_experiment import run_fine_tuning
+from .fine_tuning_experiment import run_fine_tuning_experiment
 from .loop import train
 
 
@@ -41,7 +41,7 @@ def run_transfer_learning_experiment(
     Case B (ft_epochs=<int>):
         Trains for `epochs`, reloads best TL checkpoint, unfreezes
         `n_layers` backbone blocks, re-creates optimizer with
-        discriminative LRs, then delegates to _run_fine_tuning().
+        discriminative LRs, then delegates to run_fine_tuning_experiment().
         Returns {"tl": tl_results, "ft": ft_results}.
     """
 
@@ -109,7 +109,7 @@ def run_transfer_learning_experiment(
     if ft_epochs is None:
         return tl_results
 
-    # Case B: prepare model and delegate to _run_fine_tuning
+    # Case B: prepare model and delegate to run_fine_tuning_experiment()
     tl_checkpoint_path = tl_results["checkpoint_path"]
 
     # reload best TL weights
@@ -135,7 +135,7 @@ def run_transfer_learning_experiment(
         lr_decay=lr_decay,
     )
 
-    ft_results = run_fine_tuning(
+    ft_results = run_fine_tuning_experiment(
         model_name=model_name,
         model=model,
         train_dataloader=train_dataloader,
