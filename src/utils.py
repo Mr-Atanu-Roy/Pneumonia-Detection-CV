@@ -154,13 +154,52 @@ def update_yaml_config(config_path: str, updates: Dict[str, Any]) -> None:
     Args:
         - config_path (str): path to the YAML config file to be updated
         - updates (Dict[str, Any]): dictionary containing the keys and values to update in the config file
+
+    Raises:
+        ValueError: if the config file is empty or contains invalid YAML content.
+
+    Example usage:
+        update_yaml_config(
+            config_path = REPO_DIR / "config.yaml",
+            updates = {
+                "training": {
+                    "device": device
+                },
+                "dataloader": {
+                    "num_workers": os.cpu_count() if device == "cuda" else 0
+                },
+                "paths": {
+                    "train_val_dir": str(train_val_dir),
+                    "test_dir": str(test_dir),
+                    "artifacts_dir": str(model_artifacts_dir)
+                }
+            }
+        )
     """
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
-    config.update(updates)
+    # if the config file is empty, raise an error
+    if config is None:
+        raise ValueError(
+            f"Config file at {config_path} is empty. Cannot update empty files with {updates}."
+        )
+
+    _deep_update(config, updates)
 
     with open(config_path, "w") as f:
         yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
 
     print("[INFO] Config file updated successfully.")
+
+
+def _deep_update(original: dict, updates: dict) -> None:
+    """
+    Recursively updates a nested dictionary with another dictionary.
+    """
+
+    for key, value in updates.items():
+        if isinstance(value, dict) and isinstance(original.get(key), dict):
+            _deep_update(original[key], value)
+        else:
+            original[key] = value

@@ -1,6 +1,7 @@
 # ── Paths (auto-updated at runtime by notebook — do not edit manually) ──
 paths:
     train_val_dir: "" # set by notebook after platform detection
+    test_dir: "" # set by notebook after platform detection
     artifacts_dir: "" # set by notebook after platform detection
 
 # ── W&B ──────────────────────────────────────────────────────────────────
@@ -15,7 +16,7 @@ data:
 # ── Dataloader ────────────────────────────────────────────────────────────
 dataloader:
     batch_size: 32
-    num_workers: 2
+    num_workers: 0
 
 # ── Training ─────────────────────────────────────────────────────────────
 training:

@@ -127,8 +127,8 @@ _cfg = _load_config()
 
 _project_name = _cfg["wandb"]["project_name"]
 
-_train_val_dir = _cfg["paths"]["train_val_dir"]
-_artifacts_dir = _cfg["paths"]["artifacts_dir"]
+_train_val_dir = Path(_cfg["paths"]["train_val_dir"])
+_model_artifacts_dir = Path(_cfg["paths"]["artifacts_dir"]) / "models"
 
 _val_size = _cfg["data"]["val_size"]
 _pos_weight = _cfg["data"]["pos_weight"]
@@ -163,7 +163,7 @@ def run_experiment(
     pos_weight: float = _pos_weight,
     # training
     epochs: int = _epochs,
-    artifacts_dir: str = _artifacts_dir,
+    artifacts_dir: str = _model_artifacts_dir,
     device: str = _device,
     # optimizer/model architecture
     tf_lr: float = _tf_lr,
@@ -205,7 +205,7 @@ def run_experiment(
         - project_name: W&B project name
         - extra_config: extra config to be passed to W&B
 
-        - epochs: number of epochs to train for furture extraction
+        - epochs: number of epochs to train for future extraction
         - artifacts_dir: directory where the best checkpoint .pth are saved
         - device: device to train on
 
@@ -232,8 +232,6 @@ def run_experiment(
     if persistent_workers:
         torch.multiprocessing.set_start_method("spawn", force=True)
 
-    artifacts_dir = Path(artifacts_dir)
-    train_val_dir = Path(train_val_dir)
     load_checkpoint = Path(load_checkpoint) if load_checkpoint else None
 
     # VALIDATE PARAMS---------------------
