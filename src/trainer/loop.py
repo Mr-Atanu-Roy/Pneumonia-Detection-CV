@@ -2,32 +2,32 @@
 Contains the train function to train the model for given epochs
 """
 
-import torch
-
-from typing import Dict, Any, Optional, List
-from tqdm.auto import  tqdm
-from timeit import default_timer as timer
 from pathlib import Path
+from timeit import default_timer as timer
+from typing import Any, Dict, List, Optional
 
+import torch
 import wandb
+from tqdm.auto import tqdm
 
-from .engine import train_step, eval_step, print_epoch_results
+from .engine import eval_step, train_step
 
 
-def train(train_dataloader: torch.utils.data.DataLoader,
-          eval_dataloader: torch.utils.data.DataLoader,
-          model: torch.nn.Module,
-          loss_fn: torch.nn.Module,
-          optimizer: torch.optim.Optimizer,
-          model_name: str,
-          run_name: str,
-          config: Dict[str, Any],
-          artifacts_dir: str,
-          project_name: str,
-          epochs: int,
-          device: str,
-          wandb_tags: Optional[List[str]]=None)->Dict:
-
+def train(
+    train_dataloader: torch.utils.data.DataLoader,
+    eval_dataloader: torch.utils.data.DataLoader,
+    model: torch.nn.Module,
+    loss_fn: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    model_name: str,
+    run_name: str,
+    config: Dict[str, Any],
+    artifacts_dir: str,
+    project_name: str,
+    epochs: int,
+    device: str,
+    wandb_tags: Optional[List[str]] = None,
+) -> Dict:
     """
     Trains a model over given epochs with W&B experiment tracking and checkpointing.
     Note:
@@ -57,12 +57,7 @@ def train(train_dataloader: torch.utils.data.DataLoader,
         project=project_name,
         name=run_name,
         tags=wandb_tags or [],
-        config={
-            "model_name": model_name,
-            "epochs": epochs,
-            "device": device,
-            **config
-        }
+        config={"model_name": model_name, "epochs": epochs, "device": device, **config},
     )
 
     # create proper checkpoint path
@@ -71,15 +66,12 @@ def train(train_dataloader: torch.utils.data.DataLoader,
     checkpoint_path = artifacts_dir / f"{run_name}.pth"
 
     # store the train and eval metric of each epoch
-    results = {
-        "train": [],
-        "eval": []
-    }
+    results = {"train": [], "eval": []}
 
-    best_auc = 0.0   # checkpoint creation tracker for best model
+    best_auc = 0.0  # checkpoint creation tracker for best model
 
-    #tqdm bar
-    pbar = tqdm(range(1, epochs+1))
+    # tqdm bar
+    pbar = tqdm(range(1, epochs + 1))
 
     start_time = timer()
 
@@ -91,35 +83,34 @@ def train(train_dataloader: torch.utils.data.DataLoader,
             loss_fn=loss_fn,
             optimizer=optimizer,
             dataloader=train_dataloader,
-            device=device
+            device=device,
         )
         eval_results = eval_step(
-            model=model,
-            loss_fn=loss_fn,
-            dataloader=eval_dataloader,
-            device=device
+            model=model, loss_fn=loss_fn, dataloader=eval_dataloader, device=device
         )
 
         # display the results
-        print_epoch_results(epoch, epochs, train_results, eval_results)
+        _print_epoch_results(epoch, epochs, train_results, eval_results)
 
         # store the results
         results["train"].append(train_results)
         results["eval"].append(eval_results)
 
         # log metrics group by train and eval
-        wandb.log({
-            "epoch": epoch,
-            **{f"train/{k}": v for k, v in train_results.items()},
-            **{f"eval/{k}": v for k, v in eval_results.items()}
-        })
+        wandb.log(
+            {
+                "epoch": epoch,
+                **{f"train/{k}": v for k, v in train_results.items()},
+                **{f"eval/{k}": v for k, v in eval_results.items()},
+            }
+        )
 
         # model checkpoint. Save model if beats current best f1 score
         current_auc = eval_results["auroc"]
         if current_auc > best_auc and eval_results["recall"] > 0.80:
             best_auc = current_auc
 
-            #save the model
+            # save the model
             torch.save(
                 obj={
                     "epoch": epoch,
@@ -127,16 +118,20 @@ def train(train_dataloader: torch.utils.data.DataLoader,
                     "run_name": run_name,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "best_auc": best_auc
-                }, f=checkpoint_path
+                    "best_auc": best_auc,
+                },
+                f=checkpoint_path,
             )
 
-            print(f"[INFO] New checkpoint with eval AU-ROC score={best_auc:.4f} saved at {checkpoint_path}\n")
-
+            print(
+                f"[INFO] New checkpoint with eval AU-ROC score={best_auc:.4f} saved at {checkpoint_path}\n"
+            )
 
     end_time = timer()
     total_time = end_time - start_time
-    print(f"Total training time: {total_time:.3f} seconds (~{round(total_time/60, 2)} minutes)\n")
+    print(
+        f"Total training time: {total_time:.3f} seconds (~{round(total_time / 60, 2)} minutes)\n"
+    )
 
     # save model as W&B artifacts
     model_artifact = wandb.Artifact(name=run_name, type="model")
@@ -145,10 +140,21 @@ def train(train_dataloader: torch.utils.data.DataLoader,
 
     wandb.finish()
 
-    #store checkpoint path, best f1, total training time to results
+    # store checkpoint path, best f1, total training time to results
     results["checkpoint_path"] = str(checkpoint_path)
     results["best_auc"] = best_auc
     results["time_sec"] = total_time
 
     return results
 
+
+def _print_epoch_results(
+    epoch: int, epochs: int, train_results: Dict, eval_results: Dict
+) -> None:
+    """
+    Display the train and test results of a single epoch in terminal in a formated way
+    """
+
+    print(f"Epoch [{epoch}/{epochs}]")
+    print("Train ", " | ".join(f"{k}: {v:.4f}" for k, v in train_results.items()))
+    print("Eval  ", " | ".join(f"{k}: {v:.4f}" for k, v in eval_results.items()))
