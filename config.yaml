@@ -16,7 +16,8 @@ data:
 # ── Dataloader ────────────────────────────────────────────────────────────
 dataloader:
     batch_size: 32
-    num_workers: 0
+    num_workers: null # resolved at runtime: os.cpu_count()
+    persistent_workers: null # resolved at runtime: True if num_workers > 0, else False
 
 # ── Training ─────────────────────────────────────────────────────────────
 training:

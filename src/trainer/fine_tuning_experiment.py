@@ -92,7 +92,7 @@ def run_fine_tuning_experiment(
     if from_checkpoint:
         ft_tags.append("finetune_checkpoint-tf")
 
-    print(f"\n{'-' * 70}")
+    print(f"\n{'-' * 80}")
 
     print(f"PHASE — Fine-Tuning  |  {model_name}")
     print(f"Run  : {ft_run_name}")
@@ -102,7 +102,7 @@ def run_fine_tuning_experiment(
     if tl_checkpoint_path:
         print(f"From checkpoint: {tl_checkpoint_path}")
 
-    print(f"{'-' * 70}\n")
+    print(f"{'-' * 80}\n")
 
     ft_results = train(
         train_dataloader=train_dataloader,

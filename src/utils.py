@@ -144,7 +144,35 @@ def build_wandb_config(
     return config
 
 
+from pathlib import Path
+
 import yaml
+
+
+def load_config() -> dict:
+    """
+    Loads config.yaml from the repo root.
+    Resolves the path relative to this file's location so it works
+    regardless of where the script is called from.
+
+    src/utils.py → src/ → repo root
+
+    Returns:
+        dict: parsed config dictionary
+
+    Raises:
+        FileNotFoundError: if config.yaml is not found at the repo root
+    """
+    config_path = Path(__file__).resolve().parents[1] / "config.yaml"
+
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"[ERROR] config.yaml not found at {config_path}.\n"
+            f"        Ensure config.yaml exists at the repo root"
+        )
+
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
 
 
 def update_yaml_config(config_path: str, updates: Dict[str, Any]) -> None:

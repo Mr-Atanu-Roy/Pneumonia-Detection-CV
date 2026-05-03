@@ -78,10 +78,10 @@ from typing import Any, Callable, Dict, Optional
 import torch
 import yaml
 
-from ..dataloader import create_dataloaders, get_class_weights
+from ..dataloader import create_dataloaders
 from ..models.models import create_model, create_optimizer, unfreeze_for_finetune
 from ..transform import test_transforms, train_transforms
-from ..utils import set_seeds
+from ..utils import load_config, set_seeds
 from .fine_tuning_experiment import run_fine_tuning_experiment
 from .transfer_learning_experiment import run_transfer_learning_experiment
 
@@ -102,28 +102,9 @@ def _loss_fn(name="binary_ce", pos_weight: Optional[float] = None):
     raise ValueError(f"Unknown loss function: '{name}'. Available: ['binary_ce']")
 
 
-def _load_config() -> Dict[str, Any]:
-    """
-    Loads config.yaml from the repo root (two levels up from this file).
-    src/trainer/experiment.py → src/trainer/ → src/ → repo root
-    Note:
-        - Run the update_yaml_config() in src.utils before this to update the config.yaml.
-        - This function can be used only from this file as the yaml file is expected to be at a fixed path relative to this file.
+# Load config.yaml for default values. CLI args (in train.py) will override these defaults.
 
-    Raises:
-        FileNotFoundError: if config.yaml is not found at the expected path
-    """
-    config_path = Path(__file__).resolve().parents[2] / "config.yaml"
-    if not config_path.exists():
-        raise FileNotFoundError(
-            f"[ERROR] config.yaml not found at {config_path}. "
-            f"Ensure it exists in the repo root."
-        )
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-_cfg = _load_config()
+_cfg = load_config()
 
 _project_name = _cfg["wandb"]["project_name"]
 
@@ -134,10 +115,13 @@ _val_size = _cfg["data"]["val_size"]
 _pos_weight = _cfg["data"]["pos_weight"]
 
 _batch_size = _cfg["dataloader"]["batch_size"]
-_num_workers = _cfg["dataloader"]["num_workers"]
-
 _epochs = _cfg["training"]["epochs"]
-_device = _cfg["training"]["device"]
+_device = _cfg["training"]["device"] or (
+    "cuda" if torch.cuda.is_available() else "cpu"
+)  # if default is None, resolve to "cuda" if available else "cpu"
+
+_num_workers = _cfg["dataloader"]["num_workers"] or os.cpu_count()
+_persistent_workers = _cfg["dataloader"]["persistent_workers"] or None
 
 _tf_lr = _cfg["optimizer"]["tf_lr"]
 _ft_lr = _cfg["optimizer"]["ft_lr"]
@@ -158,7 +142,7 @@ def run_experiment(
     batch_size: int = _batch_size,
     val_size: float = _val_size,
     num_workers: int = _num_workers,
-    persistent_workers: Optional[bool] = None,
+    persistent_workers: Optional[bool] = _persistent_workers,
     # loss fn
     pos_weight: float = _pos_weight,
     # training
@@ -218,11 +202,41 @@ def run_experiment(
         - load_checkpoint: path to the checkpoint to load for fine tuning. Eg: '/content/drive/MyDrive/Colab Notebooks/My Projects/Pneumonia Detection/artifacts/models/resnet50-TL_LR1e-3-EP8-B32'
 
     Raises:
+        - ValueError : num_workers = 0 and persistent_workers = True (invalid combination)
         - ValueError : mode is not "transfer_learning" or "fine_tuning"
         - ValueError : mode="transfer_learning" and load_checkpoint is given
         - ValueError : mode="fine_tuning" and ft_epochs = None
         - ValueError : load_checkpoint given and model_name does not match saved model
     """
+
+    # VALIDATE PARAMS---------------------
+
+    # 1. Invalid combination of num_workers and persistent_workers
+    if num_workers == 0 and persistent_workers:
+        raise ValueError(
+            "Invalid combination: num_workers=0 and persistent_workers=True. persistent_workers can only be True if num_workers > 0."
+        )
+
+    # 2. Invalid mode
+    if mode not in ("transfer_learning", "fine_tuning"):
+        raise ValueError(
+            f"`mode` must be 'transfer_learning' or 'fine_tuning' ('{mode}' given)."
+        )
+
+    # 3. load_checkpoint is meaningless for transfer learning
+    if mode == "transfer_learning" and load_checkpoint is not None:
+        raise ValueError(
+            "`load_checkpoint` cannot be used with mode='transfer_learning'. "
+            "To fine-tune an existing checkpoint, use mode='fine_tuning'."
+        )
+
+    # 4. fine_tuning requires at least one of load_checkpoint or ft_epochs
+    if mode == "fine_tuning" and ft_epochs is None:
+        raise ValueError(
+            "mode='fine_tuning' requires `ft_epochs` to be set.\n"
+            "  - For fine-tuning from a checkpoint (Case C): set both ft_epochs and load_checkpoint.\n"
+            "  - For fine-tuning a freshly created model (Case D): set `ft_epochs`."
+        )
 
     # Resolve persistent_workers
     if persistent_workers is None:
@@ -233,29 +247,6 @@ def run_experiment(
         torch.multiprocessing.set_start_method("spawn", force=True)
 
     load_checkpoint = Path(load_checkpoint) if load_checkpoint else None
-
-    # VALIDATE PARAMS---------------------
-
-    # 1. Invalid mode
-    if mode not in ("transfer_learning", "fine_tuning"):
-        raise ValueError(
-            f"`mode` must be 'transfer_learning' or 'fine_tuning' ('{mode}' given)."
-        )
-
-    # 2. load_checkpoint is meaningless for transfer learning
-    if mode == "transfer_learning" and load_checkpoint is not None:
-        raise ValueError(
-            "`load_checkpoint` cannot be used with mode='transfer_learning'. "
-            "To fine-tune an existing checkpoint, use mode='fine_tuning'."
-        )
-
-    # 3. fine_tuning requires at least one of load_checkpoint or ft_epochs
-    if mode == "fine_tuning" and ft_epochs is None:
-        raise ValueError(
-            "mode='fine_tuning' requires `ft_epochs` to be set.\n"
-            "  - For fine-tuning from a checkpoint (Case C): set both ft_epochs and load_checkpoint.\n"
-            "  - For fine-tuning a freshly created model (Case D): set `ft_epochs`."
-        )
 
     # DATALOADER RESOLUTION-------------------
     train_dl, val_dl, _ = create_dataloaders(
@@ -278,10 +269,10 @@ def run_experiment(
     # Case A and B
     # feature extraction --> fine tune if ft_epochs given
     if mode == "transfer_learning":
-        # 1. Create a model
+        # Create a model
         model = create_model(model_name)
 
-        # 2. Create an optimizer for model
+        # Create an optimizer for model
         tf_optimizer = create_optimizer(
             model_name=model_name,
             model=model,
@@ -320,7 +311,7 @@ def run_experiment(
         tl_run_name = checkpoint.get("run_name", "unknown-tl-run")
         tl_model_name = checkpoint.get("model_name", model_name)
 
-        # 4. model name mismatch guard
+        # 5. model name mismatch guard
         if tl_model_name != model_name:
             raise ValueError(
                 f"Model name mismatch: given '{model_name}' but the checkpoint at '{load_checkpoint}' was saved from '{tl_model_name}'"

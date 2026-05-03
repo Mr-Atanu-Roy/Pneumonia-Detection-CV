@@ -80,13 +80,13 @@ def run_transfer_learning_experiment(
     if ft_epochs is not None:
         tl_tags.append("TL_FT")
 
-    print(f"\n{'-' * 70}")
+    print(f"\n{'-' * 80}")
 
     print(f"PHASE — Transfer Learning  |  {model_name}")
     print(f"Run: {tl_run_name}")
     print(f"Epochs: {epochs}")
 
-    print(f"{'-' * 70}\n")
+    print(f"{'-' * 80}\n")
 
     # TL training
     tl_results = train(
