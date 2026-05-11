@@ -88,21 +88,6 @@ from .transfer_learning_experiment import run_transfer_learning_experiment
 
 set_seeds()
 
-
-def _loss_fn(name="binary_ce", pos_weight: Optional[float] = None):
-    """
-    Creates and returns the loss function based on the given name.
-
-    Raises:
-        - ValueError if name is not a supported loss function.
-    """
-
-    if name == "binary_ce":
-        return torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-
-    raise ValueError(f"Unknown loss function: '{name}'. Available: ['binary_ce']")
-
-
 # Load config.yaml for default values. CLI args (in train.py) will override these defaults.
 
 _cfg = load_config()
@@ -129,76 +114,6 @@ _ft_lr = _cfg["optimizer"]["ft_lr"]
 _lr_decay = _cfg["optimizer"]["lr_decay"]
 _n_layers = _cfg["optimizer"]["n_layers"]
 _optimizer_name = _cfg["optimizer"]["optimizer_name"]
-
-
-def _resolve_checkpoint_path(
-    checkpoint_stem: str,
-    checkpoint_path: Path,
-    project_name: str,
-) -> Path:
-    """
-    Ensures the checkpoint .pth file is available locally and returns its path.
-
-    If the file already exists at ``load_checkpoint`` it is returned as-is.
-    Otherwise the matching W&B artifact (name=``checkpoint_stem``, type='model')
-    is downloaded from ``project_name`` into ``artifacts/models/`` and moved to
-    the canonical flat path ``artifacts/models/<checkpoint_stem>.pth``.
-
-    Args:
-        - checkpoint_stem   : bare run-name without extension, e.g. 'vit_b_16-TL_LR1e-4-EP5-B32'
-        - checkpoint_path   : expected local path (artifacts/models/<stem>.pth)
-        - project_name      : W&B project name used to look up the artifact
-
-    Returns:
-        - Path to the local .pth file, guaranteed to exist.
-
-    Raises:
-        - FileNotFoundError : file is absent locally AND the W&B download fails
-        - FileNotFoundError : downloaded artifact directory contains no .pth file
-    """
-    if checkpoint_path.exists():
-        return checkpoint_path
-
-    print(
-        f"[INFO] Checkpoint '{checkpoint_path}' not found locally. "
-        f"Attempting to download artifact '{checkpoint_stem}' from W&B project '{project_name}'…"
-    )
-
-    _api = wandb.Api()
-    try:
-        artifact = _api.artifact(
-            f"{project_name}/{checkpoint_stem}:latest", type="model"
-        )
-        # W&B always downloads into a sub-directory; stage it next to the target.
-        artifact_dir = Path(
-            artifact.download(root=str(checkpoint_path.parent / checkpoint_stem))
-        )
-    except wandb.errors.CommError as exc:
-        raise FileNotFoundError(
-            f"Could not find checkpoint locally at '{checkpoint_path}' and failed to "
-            f"download artifact '{checkpoint_stem}:latest' from W&B project '{project_name}'.\n"
-            f"W&B error: {exc}"
-        ) from exc
-
-    # The artifact was logged with add_file(checkpoint_path) so the .pth file
-    # sits directly inside the downloaded directory.
-    downloaded_pth = next(artifact_dir.glob("*.pth"), None)
-    if downloaded_pth is None:
-        raise FileNotFoundError(
-            f"No .pth file found in the downloaded W&B artifact dir '{artifact_dir}'."
-        )
-
-    # Move to the canonical flat location: artifacts/models/<stem>.pth
-    shutil.move(str(downloaded_pth), str(checkpoint_path))
-
-    # Clean up the now-empty staging sub-directory
-    try:
-        artifact_dir.rmdir()
-    except OSError:
-        pass  # not empty – leave it
-
-    print(f"[INFO] Artifact downloaded and saved to '{checkpoint_path}'.")
-    return checkpoint_path
 
 
 def run_experiment(
@@ -455,3 +370,91 @@ def run_experiment(
         device=device,
         extra_wandb_tags=extra_wandb_tags,
     )
+
+
+## Helper functions ---------------------
+
+
+def _loss_fn(name="binary_ce", pos_weight: Optional[float] = None):
+    """
+    Creates and returns the loss function based on the given name.
+
+    Raises:
+        - ValueError if name is not a supported loss function.
+    """
+
+    if name == "binary_ce":
+        return torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    raise ValueError(f"Unknown loss function: '{name}'. Available: ['binary_ce']")
+
+
+def _resolve_checkpoint_path(
+    checkpoint_stem: str,
+    checkpoint_path: Path,
+    project_name: str,
+) -> Path:
+    """
+    Ensures the checkpoint .pth file is available locally and returns its path.
+
+    If the file already exists at ``load_checkpoint`` it is returned as-is.
+    Otherwise the matching W&B artifact (name=``checkpoint_stem``, type='model')
+    is downloaded from ``project_name`` into ``artifacts/models/`` and moved to
+    the canonical flat path ``artifacts/models/<checkpoint_stem>.pth``.
+
+    Args:
+        - checkpoint_stem   : bare run-name without extension, e.g. 'vit_b_16-TL_LR1e-4-EP5-B32'
+        - checkpoint_path   : expected local path (artifacts/models/<stem>.pth)
+        - project_name      : W&B project name used to look up the artifact
+
+    Returns:
+        - Path to the local .pth file, guaranteed to exist.
+
+    Raises:
+        - FileNotFoundError : file is absent locally AND the W&B download fails
+        - FileNotFoundError : downloaded artifact directory contains no .pth file
+    """
+
+    if checkpoint_path.exists():
+        return checkpoint_path
+
+    print(
+        f"[INFO] Checkpoint '{checkpoint_path}' not found locally. "
+        f"Attempting to download artifact '{checkpoint_stem}' from W&B project '{project_name}'…"
+    )
+
+    _api = wandb.Api()
+    try:
+        artifact = _api.artifact(
+            f"{project_name}/{checkpoint_stem}:latest", type="model"
+        )
+        # W&B always downloads into a sub-directory; stage it next to the target.
+        artifact_dir = Path(
+            artifact.download(root=str(checkpoint_path.parent / checkpoint_stem))
+        )
+    except wandb.errors.CommError as exc:
+        raise FileNotFoundError(
+            f"Could not find checkpoint locally at '{checkpoint_path}' and failed to "
+            f"download artifact '{checkpoint_stem}:latest' from W&B project '{project_name}'.\n"
+            f"W&B error: {exc}"
+        ) from exc
+
+    # The artifact was logged with add_file(checkpoint_path) so the .pth file
+    # sits directly inside the downloaded directory.
+    downloaded_pth = next(artifact_dir.glob("*.pth"), None)
+    if downloaded_pth is None:
+        raise FileNotFoundError(
+            f"No .pth file found in the downloaded W&B artifact dir '{artifact_dir}'."
+        )
+
+    # Move to the canonical flat location: artifacts/models/<stem>.pth
+    shutil.move(str(downloaded_pth), str(checkpoint_path))
+
+    # Clean up the now-empty staging sub-directory
+    try:
+        artifact_dir.rmdir()
+    except OSError:
+        pass  # not empty – leave it
+
+    print(f"[INFO] Artifact downloaded and saved to '{checkpoint_path}'.")
+    return checkpoint_path
