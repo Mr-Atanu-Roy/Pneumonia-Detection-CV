@@ -273,7 +273,9 @@ def main() -> None:
         persistent_workers=args.persistent_workers,
         pos_weight=args.pos_weight,
         epochs=args.epochs,
-        artifacts_dir=args.artifacts_dir,
+        artifacts_dir=args.artifacts_dir
+        if args.artifacts_dir.endswith("/models")
+        else f"{args.artifacts_dir}/models",
         device=args.device,
         tf_lr=args.tf_lr,
         ft_lr=args.ft_lr,
