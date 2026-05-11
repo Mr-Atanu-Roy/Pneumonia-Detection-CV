@@ -31,8 +31,8 @@ def train(
     """
     Trains a model over given epochs with W&B experiment tracking and checkpointing.
     Note:
-        - This training function is used for both future extraction and finetuning by setting the model, optimizer.
-        - Each call to train() is one independent W&B run (finetune after future extraction are 2 differnt runs)
+        - This training function is used for both future extraction and fine tuning by setting the model, optimizer.
+        - Each call to train() is one independent W&B run (finetune after future extraction are 2 different runs)
 
     Args:
         - train_dataloader  : dataloader for training data
@@ -105,9 +105,9 @@ def train(
             }
         )
 
-        # model checkpoint. Save model if beats current best f1 score
+        # model checkpoint. Save model if beats current best AUC score and recall > 0.90 to ensure we are not overfitting to precision and losing recall (sensitivity) which is crucial for medical diagnosis
         current_auc = eval_results["auroc"]
-        if current_auc > best_auc and eval_results["recall"] > 0.80:
+        if current_auc > best_auc and eval_results["recall"] > 0.90:
             best_auc = current_auc
 
             # save the model
@@ -124,8 +124,9 @@ def train(
             )
 
             print(
-                f"[INFO] New checkpoint with eval AU-ROC score={best_auc:.4f} saved at {checkpoint_path}\n"
+                f"[INFO] New checkpoint with eval AU-ROC score={best_auc:.4f} & Recall={eval_results['recall']:.4f} saved at {checkpoint_path}"
             )
+            print()
 
     end_time = timer()
     total_time = end_time - start_time
