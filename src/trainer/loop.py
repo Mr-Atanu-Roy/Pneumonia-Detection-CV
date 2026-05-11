@@ -143,8 +143,8 @@ def train(
 
     # store checkpoint path, best f1, total training time to results
     results["checkpoint_path"] = str(checkpoint_path)
-    results["best_auc"] = best_auc
-    results["time_sec"] = total_time
+    results["best_eval_auc"] = best_auc
+    results["total_time_sec"] = total_time
 
     return results
 
