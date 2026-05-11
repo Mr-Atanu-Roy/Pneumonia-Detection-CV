@@ -250,8 +250,14 @@ def main() -> None:
 
     if args.num_workers in ("auto", None):
         import os
+        import sys
 
-        args.num_workers = os.cpu_count()  # set to number of CPU cores
+        # Check if we're in an environment where multiprocessing won't work (Kaggle, notebooks, etc.)
+        # These environments don't have a proper __main__.__spec__ attribute
+        if getattr(sys.modules.get("__main__"), "__spec__", None) is None:
+            args.num_workers = 0  # Disable multiprocessing in problematic environments
+        else:
+            args.num_workers = os.cpu_count()  # set to number of CPU cores
 
     if args.persistent_workers in ("auto", None):
         args.persistent_workers = (

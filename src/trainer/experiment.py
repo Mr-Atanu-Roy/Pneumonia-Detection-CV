@@ -232,6 +232,25 @@ def run_experiment(
     if persistent_workers is None:
         persistent_workers = True if num_workers > 0 else False
 
+    # Auto-disable multiprocessing if running in a problematic environment
+    import sys
+    import warnings
+
+    if (
+        num_workers > 0
+        and getattr(sys.modules.get("__main__"), "__spec__", None) is None
+    ):
+        warnings.warn(
+            f"Detected notebook/Kaggle environment. Disabling multiprocessing (num_workers) to avoid "
+            f"AttributeError: module '__main__' has no attribute '__spec__'. "
+            f"Originally requested num_workers={num_workers}, but setting to 0.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        print()
+        num_workers = 0
+        persistent_workers = False
+
     # Set the start method for multiprocessing. This is crucial for DataLoaders with num_workers > 0 in Colab.
     if persistent_workers:
         torch.multiprocessing.set_start_method("spawn", force=True)
