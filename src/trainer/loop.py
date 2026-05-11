@@ -152,7 +152,7 @@ def _print_epoch_results(
     epoch: int, epochs: int, train_results: Dict, eval_results: Dict
 ) -> None:
     """
-    Display the train and test results of a single epoch in terminal in a formated way
+    Display the train and test results of a single epoch in terminal in a formatted way
     """
 
     print(f"Epoch [{epoch}/{epochs}]")
