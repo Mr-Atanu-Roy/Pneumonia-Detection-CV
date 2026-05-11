@@ -13,7 +13,7 @@ Usage examples:
     python train.py --model resnet50 --ft-epochs 5 --n-layers 2
 
     # Fine-tune from an existing checkpoint (Case C)
-    python train.py --model resnet50 --mode fine_tuning --ft-epochs 5 --load-checkpoint path/to/checkpoint.pth
+    python train.py --model resnet50 --mode fine_tuning --ft-epochs 5 --checkpoint-name vit_b_16-TL_LR1e-4-EP5-B32.pth
 
     # Standalone fine-tuning on a fresh model (Case D)
     python train.py --model vit_b_16 --mode fine_tuning --ft-epochs 8 --n-layers 3
@@ -218,10 +218,10 @@ def parse_args(cfg: dict) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--load-checkpoint",
+        "--checkpoint-name",
         type=str,
         default=None,
-        help="Path to a .pth checkpoint to resume fine-tuning from (Case C).",
+        help="Name of checkpoint to be used for resuming fine-tuning from (Case C).",
     )
 
     # Optional W&B tags
@@ -290,7 +290,7 @@ def main() -> None:
         optimizer_name=args.optimizer,
         n_layers=args.n_layers,
         ft_epochs=args.ft_epochs,
-        load_checkpoint=args.load_checkpoint,
+        checkpoint_name=args.checkpoint_name,
         extra_wandb_tags=args.wandb_tags,
     )
 

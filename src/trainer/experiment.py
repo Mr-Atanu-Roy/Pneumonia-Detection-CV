@@ -72,10 +72,12 @@ run_experiment()
 """
 
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import torch
+import wandb
 
 from ..dataloader import create_dataloaders
 from ..models.models import create_model, create_optimizer, unfreeze_for_finetune
@@ -129,6 +131,76 @@ _n_layers = _cfg["optimizer"]["n_layers"]
 _optimizer_name = _cfg["optimizer"]["optimizer_name"]
 
 
+def _resolve_checkpoint_path(
+    checkpoint_stem: str,
+    checkpoint_path: Path,
+    project_name: str,
+) -> Path:
+    """
+    Ensures the checkpoint .pth file is available locally and returns its path.
+
+    If the file already exists at ``load_checkpoint`` it is returned as-is.
+    Otherwise the matching W&B artifact (name=``checkpoint_stem``, type='model')
+    is downloaded from ``project_name`` into ``artifacts/models/`` and moved to
+    the canonical flat path ``artifacts/models/<checkpoint_stem>.pth``.
+
+    Args:
+        - checkpoint_stem   : bare run-name without extension, e.g. 'vit_b_16-TL_LR1e-4-EP5-B32'
+        - checkpoint_path   : expected local path (artifacts/models/<stem>.pth)
+        - project_name      : W&B project name used to look up the artifact
+
+    Returns:
+        - Path to the local .pth file, guaranteed to exist.
+
+    Raises:
+        - FileNotFoundError : file is absent locally AND the W&B download fails
+        - FileNotFoundError : downloaded artifact directory contains no .pth file
+    """
+    if checkpoint_path.exists():
+        return checkpoint_path
+
+    print(
+        f"[INFO] Checkpoint '{checkpoint_path}' not found locally. "
+        f"Attempting to download artifact '{checkpoint_stem}' from W&B project '{project_name}'…"
+    )
+
+    _api = wandb.Api()
+    try:
+        artifact = _api.artifact(
+            f"{project_name}/{checkpoint_stem}:latest", type="model"
+        )
+        # W&B always downloads into a sub-directory; stage it next to the target.
+        artifact_dir = Path(
+            artifact.download(root=str(checkpoint_path.parent / checkpoint_stem))
+        )
+    except wandb.errors.CommError as exc:
+        raise FileNotFoundError(
+            f"Could not find checkpoint locally at '{checkpoint_path}' and failed to "
+            f"download artifact '{checkpoint_stem}:latest' from W&B project '{project_name}'.\n"
+            f"W&B error: {exc}"
+        ) from exc
+
+    # The artifact was logged with add_file(checkpoint_path) so the .pth file
+    # sits directly inside the downloaded directory.
+    downloaded_pth = next(artifact_dir.glob("*.pth"), None)
+    if downloaded_pth is None:
+        raise FileNotFoundError(
+            f"No .pth file found in the downloaded W&B artifact dir '{artifact_dir}'."
+        )
+
+    # Move to the canonical flat location: artifacts/models/<stem>.pth
+    shutil.move(str(downloaded_pth), str(checkpoint_path))
+
+    # Clean up the now-empty staging sub-directory
+    try:
+        artifact_dir.rmdir()
+    except OSError:
+        pass  # not empty – leave it
+
+    print(f"[INFO] Artifact downloaded and saved to '{checkpoint_path}'.")
+    return checkpoint_path
+
+
 def run_experiment(
     model_name: str,
     mode: str = "transfer_learning",
@@ -157,7 +229,7 @@ def run_experiment(
     n_layers: int = _n_layers,
     # fine tune control
     ft_epochs: Optional[int] = None,
-    load_checkpoint: Optional[str] = None,
+    checkpoint_name: Optional[str] = None,
     # Optional W&B tags from user
     extra_wandb_tags: Optional[List] = None,
 ):
@@ -177,11 +249,11 @@ def run_experiment(
            │ Feature extraction → fine-tuning.
            │ Returns {"tl": tl_results, "ft": ft_results}.
            │
-    Case C │ mode="fine_tuning", load_checkpoint=<path>, ft_epochs=<int>
+    Case C │ mode="fine_tuning", checkpoint_name=<name>, ft_epochs=<int>
            │ Fine-tuning from existing checkpoint.
            │ Returns ft_results.
            │
-    Case D │ mode="fine_tuning", load_checkpoint=None, ft_epochs=<int>
+    Case D │ mode="fine_tuning", checkpoint_name=None, ft_epochs=<int>
            │ Fine-tuning only on a freshly created model.
            │ Returns ft_results.
 
@@ -202,14 +274,14 @@ def run_experiment(
         - n_layers: number of layers to unfreeze for fine tuning
 
         - ft_epochs: number of epochs to train for fine tuning
-        - load_checkpoint: path to the checkpoint to load for fine tuning. Eg: '/content/drive/MyDrive/Colab Notebooks/My Projects/Pneumonia Detection/artifacts/models/resnet50-TL_LR1e-3-EP8-B32'
+        - checkpoint_name: name of the checkpoint to load for fine tuning. Eg: 'vit_b_16-TL_LR1e-4-EP5-B32.pth'
 
     Raises:
         - ValueError : num_workers = 0 and persistent_workers = True (invalid combination)
         - ValueError : mode is not "transfer_learning" or "fine_tuning"
-        - ValueError : mode="transfer_learning" and load_checkpoint is given
+        - ValueError : mode="transfer_learning" and checkpoint_name is given
         - ValueError : mode="fine_tuning" and ft_epochs = None
-        - ValueError : load_checkpoint given and model_name does not match saved model
+        - ValueError : checkpoint_name given and model_name does not match saved model
     """
 
     # VALIDATE PARAMS---------------------
@@ -226,18 +298,18 @@ def run_experiment(
             f"`mode` must be 'transfer_learning' or 'fine_tuning' ('{mode}' given)."
         )
 
-    # 3. load_checkpoint is meaningless for transfer learning
-    if mode == "transfer_learning" and load_checkpoint is not None:
+    # 3. checkpoint_name is meaningless for transfer learning
+    if mode == "transfer_learning" and checkpoint_name is not None:
         raise ValueError(
-            "`load_checkpoint` cannot be used with mode='transfer_learning'. "
+            "`checkpoint_name` cannot be used with mode='transfer_learning'. "
             "To fine-tune an existing checkpoint, use mode='fine_tuning'."
         )
 
-    # 4. fine_tuning requires at least one of load_checkpoint or ft_epochs
+    # 4. fine_tuning requires at least one of checkpoint_name or ft_epochs
     if mode == "fine_tuning" and ft_epochs is None:
         raise ValueError(
             "mode='fine_tuning' requires `ft_epochs` to be set.\n"
-            "  - For fine-tuning from a checkpoint (Case C): set both ft_epochs and load_checkpoint.\n"
+            "  - For fine-tuning from a checkpoint (Case C): set both ft_epochs and checkpoint_name.\n"
             "  - For fine-tuning a freshly created model (Case D): set `ft_epochs`."
         )
 
@@ -248,8 +320,6 @@ def run_experiment(
     # Set the start method for multiprocessing. This is crucial for DataLoaders with num_workers > 0 in Colab.
     if persistent_workers:
         torch.multiprocessing.set_start_method("spawn", force=True)
-
-    load_checkpoint = Path(load_checkpoint) if load_checkpoint else None
 
     # DATALOADER RESOLUTION-------------------
     train_dl, val_dl, _ = create_dataloaders(
@@ -309,10 +379,18 @@ def run_experiment(
     # Case C and D
     # fine tuning from existing checkpoint or standalone fine tune
 
-    if load_checkpoint is not None:
+    if checkpoint_name is not None:
         # Case C: finetune from existing checkpoint
 
-        checkpoint = torch.load(load_checkpoint, map_location=device, weights_only=True)
+        checkpoint_stem = Path(checkpoint_name).stem
+        checkpoint_path = _model_artifacts_dir / f"{checkpoint_stem}.pth"
+        checkpoint_path = _resolve_checkpoint_path(
+            checkpoint_stem=checkpoint_stem,
+            checkpoint_path=checkpoint_path,
+            project_name=project_name,
+        )
+
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
 
         tl_run_name = checkpoint.get("run_name", "unknown-tl-run")
         tl_model_name = checkpoint.get("model_name", model_name)
@@ -320,18 +398,18 @@ def run_experiment(
         # 5. model name mismatch guard
         if tl_model_name != model_name:
             raise ValueError(
-                f"Model name mismatch: given '{model_name}' but the checkpoint at '{load_checkpoint}' was saved from '{tl_model_name}'"
+                f"Model name mismatch: given '{model_name}' but the checkpoint at '{checkpoint_path}' was saved from '{tl_model_name}'"
             )
 
         model = create_model(model_name)
         model.load_state_dict(checkpoint["model_state_dict"])
-        print(f"\n[INFO] Loaded checkpoint from '{load_checkpoint}'")
+        print(f"\n[INFO] Loaded checkpoint from '{checkpoint_path}'")
         print(
             f"[INFO] Parent TL run : '{tl_run_name}' "
             f"(epoch {checkpoint['epoch']}, AU-ROC: {checkpoint['best_auc']:.4f})"
         )
 
-        tl_checkpoint_path = load_checkpoint
+        tl_checkpoint_path = checkpoint_path
         from_checkpoint = True
 
     else:

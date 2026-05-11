@@ -43,7 +43,7 @@ def train(
         - model_name        : architecture name, e.g. "resnet50" (used in       checkpoint filename & W&B)
         - run_name          : unique run identifier, e.g. "resnet50-tl"
         - config            : dict of hyperparameters to log in W&B (lr, batch_size, epochs, mode, etc.)
-        - artifacts_dir     : directory where the best checkpoint .pth will be saved. Eg: '/content/drive/MyDrive/Colab Notebooks/My Projects/Pneumonia Detection/artifacts/models'
+        - artifacts_dir     : directory where the best checkpoint .pth will be saved.
         - project_name      : W&B project name (default: "pneumonia-detection")
         - epochs            : number of training epochs
         - device            : device to train on
