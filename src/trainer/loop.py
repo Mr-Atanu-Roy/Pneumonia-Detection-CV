@@ -126,7 +126,7 @@ def train(
             print(
                 f"[INFO] New checkpoint with eval AU-ROC score={best_auc:.4f} & Recall={eval_results['recall']:.4f} saved at {checkpoint_path}"
             )
-            print()
+        print()
 
     end_time = timer()
     total_time = end_time - start_time
