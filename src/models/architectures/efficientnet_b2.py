@@ -75,7 +75,7 @@ def create_model(num_classes: int = 2) -> torch.nn.Module:
 
 def create_optimizer(
     model: torch.nn.Module,
-    optimizer_cls: type[torch.optim.Optimizer] = torch.optim.Adam,
+    optimizer_cls: torch.optim.Optimizer,
     mode: str = "transfer_learning",
     n_layers: int = 1,
     tf_lr: float = 1e-3,
@@ -100,6 +100,7 @@ def create_optimizer(
 
     Args:
         - model (torch.nn.Module): model to be optimized
+        - optimizer_cls (torch.optim.Optimizer): optimizer class to instantiate
         - mode (str): "transfer_learning" or "fine_tuning"
         - tf_lr (float): learning rate for the classifier layer (independent of decay chain)
         - ft_lr (float): base learning rate for the last unfrozen MBConv block (features[7])
