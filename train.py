@@ -17,6 +17,9 @@ Usage examples:
 
     # Standalone fine-tuning on a fresh model (Case D)
     python train.py --model vit_b_16 --mode fine_tuning --ft-epochs 8 --n-layers 3
+
+    # Passing additional W&B tags
+    python train.py --model efficientnet_b2 --wandb-tags baseline test-run
 """
 
 import argparse
@@ -214,6 +217,14 @@ def parse_args(cfg: dict) -> argparse.Namespace:
         help="Path to a .pth checkpoint to resume fine-tuning from (Case C).",
     )
 
+    # Optional W&B tags
+    parser.add_argument(
+        "--wandb-tags",
+        nargs="+",
+        default=[],
+        help="Optional space-separated W&B tags to add to the run.",
+    )
+
     return parser.parse_args()
 
 
@@ -270,6 +281,7 @@ def main() -> None:
         n_layers=args.n_layers,
         ft_epochs=args.ft_epochs,
         load_checkpoint=args.load_checkpoint,
+        extra_wandb_tags=args.wandb_tags,
     )
 
 

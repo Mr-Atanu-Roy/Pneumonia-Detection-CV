@@ -3,7 +3,7 @@ Handles Fine-Tuning experiments, including Cases B (continuation), C (from check
 
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 
@@ -30,6 +30,7 @@ def run_fine_tuning_experiment(
     artifacts_dir: str,
     project_name: str,
     device: str,
+    extra_wandb_tags: Optional[List] = None,
 ) -> Dict:
     """
     Handles Fine-Tuning — Cases B (continuation), C (from checkpoint), D (standalone).
@@ -91,6 +92,10 @@ def run_fine_tuning_experiment(
         ft_tags.append("TL_FT")
     if from_checkpoint:
         ft_tags.append("finetune_checkpoint-tf")
+
+    # add any user-provided extra tags (can be a list of tags or None)
+    if extra_wandb_tags:
+        ft_tags.extend(extra_wandb_tags)
 
     print(f"\n{'-' * 80}")
 

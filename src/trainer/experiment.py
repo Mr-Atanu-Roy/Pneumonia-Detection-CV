@@ -73,7 +73,7 @@ run_experiment()
 
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 import yaml
@@ -157,6 +157,8 @@ def run_experiment(
     # fine tune control
     ft_epochs: Optional[int] = None,
     load_checkpoint: Optional[str] = None,
+    # Optional W&B tags from user
+    extra_wandb_tags: Optional[List] = None,
 ):
     """
     Top-level experiment entry point.
@@ -298,6 +300,7 @@ def run_experiment(
             artifacts_dir=artifacts_dir,
             project_name=project_name,
             device=device,
+            extra_wandb_tags=extra_wandb_tags,
         )
 
     # Case C and D
@@ -368,4 +371,5 @@ def run_experiment(
         artifacts_dir=artifacts_dir,
         project_name=project_name,
         device=device,
+        extra_wandb_tags=extra_wandb_tags,
     )

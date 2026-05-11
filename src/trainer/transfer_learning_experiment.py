@@ -3,7 +3,7 @@ Handles Transfer Learning experiments, including both Case A (feature learning o
 
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 
@@ -31,6 +31,7 @@ def run_transfer_learning_experiment(
     artifacts_dir: str,
     project_name: str,
     device: str,
+    extra_wandb_tags: Optional[List] = None,
 ) -> Dict:
     """
     Handles Transfer Learning — Case A and Case B.
@@ -79,6 +80,10 @@ def run_transfer_learning_experiment(
     tl_tags = [model_name, "TL"]
     if ft_epochs is not None:
         tl_tags.append("TL_FT")
+
+    # add any user-provided extra tags (can be a list of tags or None)
+    if extra_wandb_tags:
+        tl_tags.extend(extra_wandb_tags)
 
     print(f"\n{'-' * 80}")
 
@@ -154,6 +159,7 @@ def run_transfer_learning_experiment(
         artifacts_dir=artifacts_dir,
         project_name=project_name,
         device=device,
+        extra_wandb_tags=extra_wandb_tags,
     )
 
     return {"tl": tl_results, "ft": ft_results}
