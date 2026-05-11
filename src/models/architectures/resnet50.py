@@ -17,6 +17,7 @@ _RESNET_BLOCKS = ["layer4", "layer3", "layer2", "layer1"]
 
 _MAX_LAYERS = len(_RESNET_BLOCKS)
 
+
 def _validate_n_layers(n_layers: int) -> None:
     """
     Validates that n_layers is within the acceptable range [1, _MAX_LAYERS].
@@ -34,7 +35,7 @@ def _validate_n_layers(n_layers: int) -> None:
         )
 
 
-def create_model(num_classes: int=2)->torch.nn.Module:
+def create_model(num_classes: int = 2) -> torch.nn.Module:
     """
     Creates a resnet50 model with pretrained weights (trained on IMAGENET1K_V2 dataset) and freezes the backbone.
     Makes the classifier layer trainable with num_classes output nodes.
@@ -55,23 +56,23 @@ def create_model(num_classes: int=2)->torch.nn.Module:
     for param in model.parameters():
         param.requires_grad = False
 
-    # 3. Update the classifier (fc) layer to make last lasyer o/p as num_classes (trainable by default)
+    # 3. Update the classifier (fc) layer to make last layer o/p as num_classes (trainable by default)
     model.fc = torch.nn.Linear(
-        in_features=model.fc.in_features,
-        out_features=num_classes,
-        bias=True
+        in_features=model.fc.in_features, out_features=num_classes, bias=True
     )
 
     return model
 
 
-def create_optimizer(model: torch.nn.Module,
-                     mode: str="transfer_learning",
-                     n_layers: int=1,
-                     tf_lr: float=1e-3,
-                     ft_lr: float=1e-5,
-                     lr_decay: float=0.1)->torch.optim.Optimizer:
-
+def create_optimizer(
+    model: torch.nn.Module,
+    optimizer_cls: type[torch.optim.Optimizer] = torch.optim.Adam,
+    mode: str = "transfer_learning",
+    n_layers: int = 1,
+    tf_lr: float = 1e-3,
+    ft_lr: float = 1e-5,
+    lr_decay: float = 0.1,
+) -> torch.optim.Optimizer:
     """
     Creates optimizer for transfer learning or fine-tuning.
     For transfer learning: only the fc layer parameters are updated.
@@ -98,34 +99,32 @@ def create_optimizer(model: torch.nn.Module,
         - optimizer (torch.optim.Optimizer)
     """
 
-    # make sure mode is eigther transfer_learning or fine_tuning
+    # make sure mode is either transfer_learning or fine_tuning
     if mode not in ["transfer_learning", "fine_tuning"]:
         raise ValueError(
             f"Mode must be either 'transfer_learning' or 'fine_tuning'. ({mode} given)"
         )
 
     # Return optimizer for transfer_learning
-    if mode=="transfer_learning":
-        return torch.optim.Adam(params=model.fc.parameters(), lr=tf_lr)
+    if mode == "transfer_learning":
+        return optimizer_cls(params=model.fc.parameters(), lr=tf_lr)
 
-    #for fine tuning
+    # for fine tuning
     _validate_n_layers(n_layers)
 
     param_groups = []
 
     # residual blocks params
     for i, residual_block in enumerate(_RESNET_BLOCKS[:n_layers]):
-        block_lr = ft_lr * (lr_decay ** i)
+        block_lr = ft_lr * (lr_decay**i)
         param_groups.append(
             {"params": getattr(model, residual_block).parameters(), "lr": block_lr}
         )
 
-    return torch.optim.Adam(param_groups)
+    return optimizer_cls(param_groups)
 
 
-
-def unfreeze_for_finetune(model: torch.nn.Module,
-                          n_layers: int=1)->None:
+def unfreeze_for_finetune(model: torch.nn.Module, n_layers: int = 1) -> None:
     """
     Unfreezes the last n_layers residual blocks of resent50.
     NOTE: the classifier layer (fc) is already unfrozen.
@@ -150,5 +149,4 @@ def unfreeze_for_finetune(model: torch.nn.Module,
         for param in getattr(model, residual_block).parameters():
             param.requires_grad = True
 
-    #return is not required as nn.Module objs are mutable
-
+    # return is not required as nn.Module objs are mutable

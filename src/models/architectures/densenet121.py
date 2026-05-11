@@ -12,7 +12,6 @@ Contains functions to do the following for densenet121 model:
 import torch
 from torchvision import models
 
-
 # Ordered from last to first (unfreezing starts from the end)
 # Each entry: (dense_block_attr, associated_norm_or_transition_attr)
 _DENSENET_BLOCKS = [
@@ -41,11 +40,11 @@ def _validate_n_layers(n_layers: int) -> None:
         )
 
 
-def create_model(num_classes: int=2)->torch.nn.Module:
+def create_model(num_classes: int = 2) -> torch.nn.Module:
     """
     Creates a densenet121 model with pretrained weights (trained on IMAGENET1K_V2 dataset) and freeze the backbone.
     Makes the classifier layer trainable with num_classes output nodes.
-    Usefull for transfer learning.
+    Useful for transfer learning.
 
     Args:
         - num_classes (int): number of output classes
@@ -63,23 +62,23 @@ def create_model(num_classes: int=2)->torch.nn.Module:
     for param in model.parameters():
         param.requires_grad = False
 
-    # 3. Update the classifier layer to make last lasyer o/p as num_classes (trainable by default)
+    # 3. Update the classifier layer to make last layer o/p as num_classes (trainable by default)
     model.classifier = torch.nn.Linear(
-        in_features=model.classifier.in_features,
-        out_features=num_classes,
-        bias=True
+        in_features=model.classifier.in_features, out_features=num_classes, bias=True
     )
 
     return model
 
 
-def create_optimizer(model: torch.nn.Module,
-                     mode: str="transfer_learning",
-                     n_layers: int = 1,
-                     tf_lr: float=1e-3,
-                     ft_lr: float=1e-5,
-                     lr_decay: float=0.1)->torch.optim.Optimizer:
-
+def create_optimizer(
+    model: torch.nn.Module,
+    optimizer_cls: type[torch.optim.Optimizer] = torch.optim.Adam,
+    mode: str = "transfer_learning",
+    n_layers: int = 1,
+    tf_lr: float = 1e-3,
+    ft_lr: float = 1e-5,
+    lr_decay: float = 0.1,
+) -> torch.optim.Optimizer:
     """
     Creates optimizer for transfer learning or fine-tuning.
     For transfer learning: only the classifier layer parameters are updated.
@@ -113,36 +112,37 @@ def create_optimizer(model: torch.nn.Module,
         )
 
     # Return optimizer for transfer_learning
-    if mode=="transfer_learning":
-        return torch.optim.Adam(params=model.classifier.parameters(), lr=tf_lr)
+    if mode == "transfer_learning":
+        return optimizer_cls(params=model.classifier.parameters(), lr=tf_lr)
 
-
-    #for fine tuning
+    # for fine tuning
 
     _validate_n_layers(n_layers)
 
     param_groups = []
 
     # Add last n_layers dense blocks and their associated norm/transition layers
-    for i, (block_attr, associated_block_attr) in enumerate(_DENSENET_BLOCKS[:n_layers]):
-        block_lr = ft_lr * (lr_decay ** i)
+    for i, (block_attr, associated_block_attr) in enumerate(
+        _DENSENET_BLOCKS[:n_layers]
+    ):
+        block_lr = ft_lr * (lr_decay**i)
         param_groups.append(
             {"params": getattr(model.features, block_attr).parameters(), "lr": block_lr}
         )
         param_groups.append(
-            {"params": getattr(model.features, associated_block_attr).parameters(), "lr": block_lr}
+            {
+                "params": getattr(model.features, associated_block_attr).parameters(),
+                "lr": block_lr,
+            }
         )
 
-    # include classifer head params
-    param_groups.append(
-        {"params": model.classifier.parameters(), "lr": tf_lr}
-    )
+    # include classifier head params
+    param_groups.append({"params": model.classifier.parameters(), "lr": tf_lr})
 
-    return torch.optim.Adam(param_groups)
+    return optimizer_cls(param_groups)
 
 
-def unfreeze_for_finetune(model: torch.nn.Module,
-                          n_layers: int=1) -> None:
+def unfreeze_for_finetune(model: torch.nn.Module, n_layers: int = 1) -> None:
     """
     Unfreezes the last n_layers dense blocks and their associated norm/transition layers.
     NOTE: the classifier layer is already unfrozen.
@@ -165,7 +165,6 @@ def unfreeze_for_finetune(model: torch.nn.Module,
 
     # Unfreeze last n_layers dense blocks and their associated norm/transition layers
     for block_attr, associated_block_attr in _DENSENET_BLOCKS[:n_layers]:
-
         # unfreeze dense block
         for param in getattr(model.features, block_attr).parameters():
             param.requires_grad = True
@@ -173,4 +172,3 @@ def unfreeze_for_finetune(model: torch.nn.Module,
         # unfreeze associated block
         for param in getattr(model.features, associated_block_attr).parameters():
             param.requires_grad = True
-

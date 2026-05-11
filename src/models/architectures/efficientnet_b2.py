@@ -21,7 +21,6 @@ _EFFICIENTNET_BLOCKS = list(range(7, -1, -1))  # [7, 6, 5, 4, 3, 2, 1, 0]
 _MAX_LAYERS = len(_EFFICIENTNET_BLOCKS)
 
 
-
 def _validate_n_layers(n_layers: int) -> None:
     """
     Validates that n_layers is within the acceptable range [1, _MAX_LAYERS].
@@ -39,11 +38,11 @@ def _validate_n_layers(n_layers: int) -> None:
         )
 
 
-def create_model(num_classes: int=2)->torch.nn.Module:
+def create_model(num_classes: int = 2) -> torch.nn.Module:
     """
     Creates a efficientnet_b2 model with pretrained weights (trained on IMAGENET1K_V2 dataset) and freeze the backbone.
     Makes the classifier layer trainable with num_classes output nodes.
-    Usefull for transfer learning.
+    Useful for transfer learning.
 
     Args:
         - num_classes (int): number of output classes
@@ -67,20 +66,22 @@ def create_model(num_classes: int=2)->torch.nn.Module:
         torch.nn.Linear(
             in_features=model.classifier[1].in_features,
             out_features=num_classes,
-            bias=True
-        )
+            bias=True,
+        ),
     )
 
     return model
 
 
-def create_optimizer(model: torch.nn.Module,
-                     mode: str="transfer_learning",
-                     n_layers: int=1,
-                     tf_lr: float=1e-3,
-                     ft_lr: float=1e-5,
-                     lr_decay: float=0.1)->torch.optim.Optimizer:
-
+def create_optimizer(
+    model: torch.nn.Module,
+    optimizer_cls: type[torch.optim.Optimizer] = torch.optim.Adam,
+    mode: str = "transfer_learning",
+    n_layers: int = 1,
+    tf_lr: float = 1e-3,
+    ft_lr: float = 1e-5,
+    lr_decay: float = 0.1,
+) -> torch.optim.Optimizer:
     """
     Creates optimizer for transfer learning or fine-tuning.
     For transfer learning: only the classifier layer parameters are updated.
@@ -109,16 +110,15 @@ def create_optimizer(model: torch.nn.Module,
         - optimizer (torch.optim.Optimizer)
     """
 
-    # make sure mode is eigther transfer_learning or fine_tuning
+    # make sure mode is either transfer_learning or fine_tuning
     if mode not in ["transfer_learning", "fine_tuning"]:
         raise ValueError(
             f"mode must be either 'transfer_learning' or 'fine_tuning'. ({mode} given)"
         )
 
     # Return optimizer for transfer_learning
-    if mode=="transfer_learning":
-        return torch.optim.Adam(params=model.classifier.parameters(), lr=tf_lr)
-
+    if mode == "transfer_learning":
+        return optimizer_cls(params=model.classifier.parameters(), lr=tf_lr)
 
     # for fine tuning
 
@@ -127,27 +127,21 @@ def create_optimizer(model: torch.nn.Module,
     param_groups = []
 
     for i, effnet_block_idx in enumerate(_EFFICIENTNET_BLOCKS[:n_layers]):
-        block_lr = ft_lr * (lr_decay ** i)
+        block_lr = ft_lr * (lr_decay**i)
         param_groups.append(
             {"params": model.features[effnet_block_idx].parameters(), "lr": block_lr}
         )
 
     # Conv2dNormActivation layer (features[8]) params
-    param_groups.append(
-        {"params": model.features[8].parameters(), "lr": ft_lr}
-    )
+    param_groups.append({"params": model.features[8].parameters(), "lr": ft_lr})
 
     # classifier head params
-    param_groups.append(
-        {"params": model.classifier.parameters(), "lr": tf_lr}
-    )
+    param_groups.append({"params": model.classifier.parameters(), "lr": tf_lr})
 
-    return torch.optim.Adam(param_groups)
+    return optimizer_cls(param_groups)
 
 
-def unfreeze_for_finetune(model: torch.nn.Module,
-                          n_layers: int=1)->None:
-
+def unfreeze_for_finetune(model: torch.nn.Module, n_layers: int = 1) -> None:
     """
     Unfreezes features[8] (Conv2dNormActivation) always, plus the last n_layers
     MBConv blocks (features[7] down to features[0]).
@@ -175,4 +169,3 @@ def unfreeze_for_finetune(model: torch.nn.Module,
     # unfreeze the last Conv2dNormActivation layer (features[8])
     for param in model.features[8].parameters():
         param.requires_grad = True
-

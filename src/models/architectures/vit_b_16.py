@@ -37,8 +37,7 @@ def _validate_n_layers(n_layers: int) -> None:
         )
 
 
-
-def create_model(num_classes: int=2)->torch.nn.Module:
+def create_model(num_classes: int = 2) -> torch.nn.Module:
     """
     Creates a vit_b_16 model with pretrained weights (trained on IMAGENET1K_V2 dataset) and freezes the backbone.
     Makes the classifier layer trainable with num_classes output nodes.
@@ -51,7 +50,6 @@ def create_model(num_classes: int=2)->torch.nn.Module:
         - model (torch.nn.Module): vit_b_16
     """
 
-
     # 1. Initialize a vit_b_16 model pretrained on IMAGENET1K_V2 dataset
     model_weights = models.ViT_B_16_Weights.DEFAULT
     model = models.vit_b_16(weights=model_weights)
@@ -62,21 +60,21 @@ def create_model(num_classes: int=2)->torch.nn.Module:
 
     # 3. Update the classifier head to make last layer o/p as num_classes (trainable by default)
     model.heads.head = torch.nn.Linear(
-        in_features=model.heads.head.in_features,
-        out_features=num_classes,
-        bias=True
+        in_features=model.heads.head.in_features, out_features=num_classes, bias=True
     )
 
     return model
 
 
-def create_optimizer(model: torch.nn.Module,
-                     mode: str="transfer_learning",
-                     n_layers: int=1,
-                     tf_lr: float=1e-4,
-                     ft_lr: float=1e-5,
-                     lr_decay: float=0.1)->torch.optim.Optimizer:
-
+def create_optimizer(
+    model: torch.nn.Module,
+    optimizer_cls: type[torch.optim.Optimizer] = torch.optim.Adam,
+    mode: str = "transfer_learning",
+    n_layers: int = 1,
+    tf_lr: float = 1e-4,
+    ft_lr: float = 1e-5,
+    lr_decay: float = 0.1,
+) -> torch.optim.Optimizer:
     """
     Creates optimizer for transfer learning or fine-tuning.
     For transfer learning: only the classifier head parameters are updated.
@@ -106,47 +104,42 @@ def create_optimizer(model: torch.nn.Module,
         - optimizer (torch.optim.Optimizer)
     """
 
-    # make sure mode is eigther transfer_learning or fine_tuning
+    # make sure mode is either transfer_learning or fine_tuning
     if mode not in ["transfer_learning", "fine_tuning"]:
         raise ValueError(
             f"mode must be either 'transfer_learning' or 'fine_tuning'. ({mode} given)"
         )
 
-
     # Return optimizer for transfer_learning
-    if mode=="transfer_learning":
-        return torch.optim.Adam(params=model.heads.parameters(), lr=tf_lr)
+    if mode == "transfer_learning":
+        return optimizer_cls(params=model.heads.parameters(), lr=tf_lr)
 
     # for fine tuning
 
     _validate_n_layers(n_layers)
 
-
     param_groups = []
 
-    # ecoder layer params
+    # encoder layer params
     for i, encoder_layer in enumerate(_ENCODER_BLOCKS[:n_layers]):
-        block_lr = ft_lr * (lr_decay ** i)
+        block_lr = ft_lr * (lr_decay**i)
         param_groups.append(
-            {"params": getattr(model.encoder.layers, encoder_layer).parameters(), "lr": block_lr}
+            {
+                "params": getattr(model.encoder.layers, encoder_layer).parameters(),
+                "lr": block_lr,
+            }
         )
 
     # include the ln layer
-    param_groups.append(
-        {"params": model.encoder.ln.parameters(), "lr": tf_lr}
-    )
+    param_groups.append({"params": model.encoder.ln.parameters(), "lr": tf_lr})
 
     # include the classifier head params
-    param_groups.append(
-        {"params": model.heads.parameters(), "lr": tf_lr}
-    )
+    param_groups.append({"params": model.heads.parameters(), "lr": tf_lr})
 
-    return torch.optim.Adam(param_groups)
+    return optimizer_cls(param_groups)
 
 
-
-def unfreeze_for_finetune(model: torch.nn.Module,
-                          n_layers: int=1)->None:
+def unfreeze_for_finetune(model: torch.nn.Module, n_layers: int = 1) -> None:
     """
     Unfreezes the last n_layers encoder blocks. The ln layer is always
     unfrozen whenever any encoder block is unfrozen.
@@ -176,4 +169,3 @@ def unfreeze_for_finetune(model: torch.nn.Module,
     # unfreeze ln
     for param in model.encoder.ln.parameters():
         param.requires_grad = True
-

@@ -26,6 +26,7 @@ training:
 
 # ── Optimizer ────────────────────────────────────────────────────────────
 optimizer:
+    optimizer_name: adam
     tf_lr: 0.001
     ft_lr: 0.00001
     lr_decay: 0.2

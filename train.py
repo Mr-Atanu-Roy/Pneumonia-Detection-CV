@@ -187,6 +187,13 @@ def parse_args(cfg: dict) -> argparse.Namespace:
         help="Multiplicative LR decay per backbone block during fine-tuning (for discriminative learning strategy).",
     )
     parser.add_argument(
+        "--optimizer",
+        type=str,
+        default=c_opt["optimizer_name"],
+        choices=["adam", "adamw"],
+        help="Optimizer to use for transfer learning and fine-tuning.",
+    )
+    parser.add_argument(
         "--n-layers",
         type=int,
         default=c_opt["n_layers"],
@@ -280,6 +287,7 @@ def main() -> None:
         tf_lr=args.tf_lr,
         ft_lr=args.ft_lr,
         lr_decay=args.lr_decay,
+        optimizer_name=args.optimizer,
         n_layers=args.n_layers,
         ft_epochs=args.ft_epochs,
         load_checkpoint=args.load_checkpoint,

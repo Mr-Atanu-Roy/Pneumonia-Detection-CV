@@ -22,6 +22,7 @@ def run_transfer_learning_experiment(
     loss_fn: torch.nn.Module,
     epochs: int,
     batch_size: int,
+    optimizer_name: str,
     tf_lr: float,
     ft_lr: Optional[float],
     lr_decay: Optional[float],
@@ -133,6 +134,7 @@ def run_transfer_learning_experiment(
     ft_optimizer = create_optimizer(
         model_name=model_name,
         model=model,
+        optimizer_name=optimizer_name,
         mode="fine_tuning",
         n_layers=n_layers,
         tf_lr=tf_lr,

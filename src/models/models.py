@@ -3,19 +3,51 @@ Contains registry of models and their architectures
 """
 
 import torch
-from .architectures import resnet50, densenet121, efficientnet_b2, vit_b_16
+
+from .architectures import densenet121, efficientnet_b2, resnet50, vit_b_16
 
 model_registry = {
     "resnet50": resnet50,
     "densenet121": densenet121,
     "efficientnet_b2": efficientnet_b2,
-    "vit_b_16": vit_b_16
+    "vit_b_16": vit_b_16,
 }
+
+optimizer_registry = {
+    "adam": torch.optim.Adam,
+    "adamw": torch.optim.AdamW,
+}
+
+
+def _resolve_optimizer_cls(optimizer_name: str) -> type[torch.optim.Optimizer]:
+    """
+    Helper function to validate and return optimizer class from optimizer_registry.
+
+    Args:
+        - optimizer_name (str): name of the optimizer to validate and return
+    Returns:
+        - optimizer_cls (type[torch.optim.Optimizer]): optimizer class from optimizer_registry
+
+    """
+
+    if not isinstance(optimizer_name, str):
+        raise ValueError(
+            f"optimizer_name must be a string. ({type(optimizer_name)} given)"
+        )
+
+    optimizer_name = optimizer_name.lower()
+    if optimizer_name not in optimizer_registry.keys():
+        raise ValueError(
+            f"Optimizer name: {optimizer_name} is not present in optimizer registry. "
+            f"Available optimizers: {list(optimizer_registry.keys())}"
+        )
+
+    return optimizer_registry[optimizer_name]
 
 
 def _validate_model(model_name: str) -> None:
     """
-    Validate whether a model is present in the model registry.
+    helper function to validate whether a model is present in the model registry.
 
     Args:
         - model_name (str): name of the model to validate
@@ -23,6 +55,11 @@ def _validate_model(model_name: str) -> None:
     Raises:
         - ValueError: if model is not present in the registry
     """
+
+    if not isinstance(model_name, str):
+        raise ValueError(f"model_name must be a string. ({type(model_name)} given)")
+
+    model_name = model_name.lower()
     if model_name not in model_registry.keys():
         raise ValueError(
             f"Model name: {model_name} is not present in model registry. "
@@ -30,12 +67,10 @@ def _validate_model(model_name: str) -> None:
         )
 
 
-def create_model(model_name: str,
-                 num_classes: int=1)->torch.nn.Module:
-
+def create_model(model_name: str, num_classes: int = 1) -> torch.nn.Module:
     """
     Creates a model from the registry.
-    Note: By default the num_classes is set to 1 which means binary classification. For multiclass classification set it to a value greater than 2.
+    Note: By default the num_classes is set to 1 which means binary classification. For multi class classification set it to a value greater than 2.
 
     Args:
         - model_name (str): name of the model to create
@@ -45,25 +80,30 @@ def create_model(model_name: str,
         - model (torch.nn.Module): model created from the registry
 
     Raises:
-        - ValueError: if num_classes is not greater than 2 for multiclass classification
+        - ValueError: if num_classes is not greater than 2 for multi class classification
     """
 
     _validate_model(model_name)
 
-    # num_classes can be either 1 for binary classification or grater than 2 for multiclass classification
-    if num_classes==2:
-        raise ValueError(f"num_classes must be greater than 2 for multiclass classification ({num_classes} given)")
+    # num_classes can be either 1 for binary classification or grater than 2 for multi class classification
+    if num_classes == 2:
+        raise ValueError(
+            f"num_classes must be greater than 2 for multi class classification ({num_classes} given)"
+        )
 
     return model_registry[model_name].create_model(num_classes=num_classes)
 
 
-def create_optimizer(model_name: str,
-                     model: torch.nn.Module,
-                     mode: str="transfer_learning",
-                     n_layers: int=1,
-                     tf_lr: float=1e-3,
-                     ft_lr: float=1e-5,
-                     lr_decay: float=0.1)->torch.optim.Optimizer:
+def create_optimizer(
+    model_name: str,
+    model: torch.nn.Module,
+    optimizer_name: str = "adam",
+    mode: str = "transfer_learning",
+    n_layers: int = 1,
+    tf_lr: float = 1e-3,
+    ft_lr: float = 1e-5,
+    lr_decay: float = 0.1,
+) -> torch.optim.Optimizer:
     """
     Returns optimizer for given model_name and model instance for model present in registry.
 
@@ -81,6 +121,7 @@ def create_optimizer(model_name: str,
     Args:
         - model_name (str): name of the model
         - model (torch.nn.Module): model to create optimizer for
+        - optimizer_name (str): optimizer to use. Must be 'adam' or 'adamw'
         - mode (str): "transfer_learning" or "fine_tuning"
         - tf_lr (float): learning rate for the classifier layer (independent of decay chain)
         - ft_lr (float): base learning rate for the last unfrozen backbone block
@@ -96,22 +137,24 @@ def create_optimizer(model_name: str,
         - optimizer (torch.optim.Optimizer): optimizer for the model
     """
 
-
     _validate_model(model_name)
+
+    optimizer_cls = _resolve_optimizer_cls(optimizer_name)
 
     return model_registry[model_name].create_optimizer(
         model=model,
+        optimizer_cls=optimizer_cls,
         mode=mode,
         n_layers=n_layers,
         tf_lr=tf_lr,
         ft_lr=ft_lr,
-        lr_decay=lr_decay
+        lr_decay=lr_decay,
     )
 
 
-def unfreeze_for_finetune(model_name: str,
-                          model: torch.nn.Module,
-                          n_layers: int=1)->None:
+def unfreeze_for_finetune(
+    model_name: str, model: torch.nn.Module, n_layers: int = 1
+) -> None:
     """
     Unfreezes the last n_layers feature blocks of the given model for fine-tuning.
     Associated norm/transition layers are unfrozen alongside their respective blocks.

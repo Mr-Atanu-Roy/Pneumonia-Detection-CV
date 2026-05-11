@@ -76,7 +76,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import torch
-import yaml
 
 from ..dataloader import create_dataloaders
 from ..models.models import create_model, create_optimizer, unfreeze_for_finetune
@@ -127,6 +126,7 @@ _tf_lr = _cfg["optimizer"]["tf_lr"]
 _ft_lr = _cfg["optimizer"]["ft_lr"]
 _lr_decay = _cfg["optimizer"]["lr_decay"]
 _n_layers = _cfg["optimizer"]["n_layers"]
+_optimizer_name = _cfg["optimizer"]["optimizer_name"]
 
 
 def run_experiment(
@@ -150,6 +150,7 @@ def run_experiment(
     artifacts_dir: str = _model_artifacts_dir,
     device: str = _device,
     # optimizer/model architecture
+    optimizer_name: str = _optimizer_name,
     tf_lr: float = _tf_lr,
     ft_lr: float = _ft_lr,
     lr_decay: float = _lr_decay,
@@ -278,6 +279,7 @@ def run_experiment(
         tf_optimizer = create_optimizer(
             model_name=model_name,
             model=model,
+            optimizer_name=optimizer_name,
             mode="transfer_learning",
             tf_lr=tf_lr,
         )
@@ -291,6 +293,7 @@ def run_experiment(
             loss_fn=loss_fn,
             epochs=epochs,
             batch_size=batch_size,
+            optimizer_name=optimizer_name,
             tf_lr=tf_lr,
             ft_lr=ft_lr,
             lr_decay=lr_decay,
@@ -345,6 +348,7 @@ def run_experiment(
     ft_optimizer = create_optimizer(
         model_name=model_name,
         model=model,
+        optimizer_name=optimizer_name,
         mode="fine_tuning",
         n_layers=n_layers,
         tf_lr=tf_lr,
