@@ -1,5 +1,5 @@
 import random
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -341,3 +341,209 @@ def save_wandb_table(
 
     finally:
         wandb.finish()
+
+
+def convert_results_to_df(
+    training_config: Dict[str, Any],
+    exclude_keys: Optional[List[str]] = None,
+    save_df_as_csv: bool = True,
+    csv_file_name: Optional[Union[str, List[str]]] = [
+        "best_model_results",
+        "all_model_results",
+    ],
+    wandb_run_name: Optional[str] = "Model_Results_Summary",
+    wandb_tags: Optional[List[str]] = None,
+    save_as_wandb_artifact: bool = True,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Converts a results dict obtained from model training into 2 pandas DataFrame: one for best model checkpoints (eval only) and another for all training metrics (train and eval).
+
+    Args:
+        - training_config (Dict[str, Any]): Dictionary containing the raw model training config which includes the configs for training and results.
+        Eg:
+        {
+            'batch_size': 32,
+            'extra_wandb_tags': ['phase 1', 'baseline'],
+            'models': {
+                'resnet50': {
+                    'epochs': 5,
+                    'n_layers': 2,
+                    'tf_lr': 0.0001,
+                    'results': {
+                        'total_time_sec': 377.19355332400005,
+                        'best_model_metric_name': 'auroc',
+                        'best_model_metric_value': 0.9390890598297119,
+                        'checkpoint_path': '/kaggle/working/artifacts/models/densenet121-TL_LR1e-3-EP5-B32.pth',
+                        .
+                        .
+                        .
+                        'train':
+                        [{'accuracy': 0.9321871995925903,
+                        'auroc': 0.9096024632453918,
+                        'f1_score': 0.9543994665145874,
+                        'loss': 0.18135502731258218,
+                        'precision': 0.9525641202926636,
+                        'recall': 0.9562419652938843,
+                        'specificity': 0.8629629611968994},
+                        {'accuracy': 0.9293218851089478,
+                        'auroc': 0.9270055294036865,
+                        'f1_score': 0.9513797760009766,
+                        'loss': 0.15081403223854123,
+                        'precision': 0.9718120694160461,
+                        'recall': 0.9317889213562012,
+                        'specificity': 0.9222221970558167}],
+
+                        'eval': [{'accuracy': 0.9321871995925903,
+                                'auroc': 0.9096024632453918,
+                                'f1_score': 0.9543994665145874,
+                                'loss': 0.18135502731258218,
+                                'precision': 0.9525641202926636,
+                                'recall': 0.9562419652938843,
+                                'specificity': 0.8629629611968994},
+                                {'accuracy': 0.9293218851089478,
+                                'auroc': 0.9270055294036865,
+                                'f1_score': 0.9513797760009766,
+                                'loss': 0.15081403223854123,
+                                'precision': 0.9718120694160461,
+                                'recall': 0.9317889213562012,
+                                'specificity': 0.9222221970558167}],
+                    }
+                },
+                'densenet121': {
+                    .......
+                },
+                .
+                .
+                .
+            }
+        }
+        - exclude_keys (List[str], optional): List of keys to exclude from the conversion.
+        - recall_threshold (float, optional): Minimum recall value required for a model checkpoint to be considered as the best model. Default is 0.9.
+        - save_df_as_csv (bool, optional): Whether to save the resulting DataFrames as CSV files
+        - csv_file_name (str or list[str], optional): Name(s) for the CSV file(s) to save the DataFrames. If a single string is provided it will be used for both DataFrames. If a list is provided, it must contain two strings corresponding to the two DataFrames. Default is ["best_model_results", "all_model_results"].
+        - wandb_run_name (str, optional): Name to use for the W&B run when logging the DataFrames. Default is "Model_Results_Summary".
+        - wandb_tags (list[str], optional): Tags to attach to the W&B run when logging the DataFrames.
+        - save_as_wandb_artifact (bool, optional): Whether to log the CSV file(s) as a W&B artifact. Default is True. To set it True the save_df_as_csv must be True.
+
+    Returns:
+        - Tuple[pd.DataFrame, pd.DataFrame]: A tuple containing two DataFrames: one for best model checkpoints (eval only) and another for all training metrics (train and eval).
+
+    Raises:
+        - ValueError: If save_as_wandb_artifact is True but save_df_as_csv is False
+    """
+
+    if save_as_wandb_artifact and not save_df_as_csv:
+        raise ValueError(
+            "save_as_wandb_artifact cannot be True if save_df_as_csv is False. To log as artifact, the DataFrame(s) must first be saved as CSV file(s)."
+        )
+
+    # get the recall threshold from the config file
+    cfg = load_config()
+    recall_threshold = cfg["training"]["recall_threshold"]
+
+    # Ensure exclude_keys is a list and add default keys to exclude
+    exclude_keys = exclude_keys if exclude_keys else []
+    exclude_keys.extend(["wandb_tags", "extra_wandb_tags"])
+
+    best_model_df_data = []  # DF 1: one row per model with best checkpoint info and configs
+
+    all_model_df_data = []  # DF 2: one row per epoch per model with all train and eval metrics, configs, and checkpoint info
+
+    for model_name in training_config["models"]:
+        if "results" not in training_config["models"][model_name]:
+            raise ValueError(
+                f"Missing 'results' key for model '{model_name}' in training_config."
+            )
+
+        base_model_info = {
+            "model_name": model_name,
+        }
+
+        # add the base info common to all models for the model (excluding the keys in exclude_keys and "results")
+        for base_key in training_config:
+            if (
+                base_key not in exclude_keys
+                and base_key != "results"
+                and isinstance(training_config[base_key], (str, int, float, bool))
+            ):
+                base_model_info[base_key] = training_config[base_key]
+
+        # add model specific info (excluding the keys in exclude_keys and "results"). Overwrite any base info with model-specific values if there's a key overlap.
+        for model_key in training_config["models"][model_name]:
+            if model_key not in exclude_keys and model_key != "results":
+                base_model_info[
+                    "total_epochs" if model_key == "epochs" else model_key
+                ] = training_config["models"][model_name][model_key]
+
+        # results is expected to be a dict with keys like "best_model_metric_name", "best_model_metric_value", "checkpoint_path", "train" (list of dicts), "eval" (list of dicts)
+        results = training_config["models"][model_name]["results"]
+        base_model_info["best_model_metric_name"] = results.get(
+            "best_model_metric_name"
+        )
+        base_model_info["best_model_metric_value"] = results.get(
+            "best_model_metric_value"
+        )
+        base_model_info["best_checkpoint_path"] = (
+            Path(results.get("checkpoint_path")).name
+            if results.get("checkpoint_path")
+            else None
+        )
+        base_model_info["total_time_sec"] = results.get("total_time_sec")
+        # total_time_sec is combined time for train and eval per epoch, so divide by number of epochs
+        num_epochs = len(results.get("train", []))
+        base_model_info["avg_train_time_per_epoch_sec"] = (
+            results.get("total_time_sec") / num_epochs if num_epochs > 0 else None
+        )
+
+        # Creating data for DF 1: one row per epoch per model with all train and eval metrics, configs, and checkpoint info
+        best_model_metric_value = -1
+        for epoch, eval_res in enumerate(
+            results["eval"], start=1
+        ):  # start counting from 1
+            current_best_metric_value = eval_res.get(
+                base_model_info["best_model_metric_name"]
+            )
+            if (
+                current_best_metric_value is not None
+                and current_best_metric_value > best_model_metric_value
+                and eval_res["recall"] > recall_threshold
+            ):
+                best_model_metric_value = current_best_metric_value
+                best_result = {"best_epoch": epoch, **eval_res}
+
+        if best_model_metric_value == -1:
+            # when no epoch meets the best model criteria
+            best_result = {"best_epoch": None}
+
+        best_model_df_data.append({**base_model_info, **best_result})
+
+        # Creating data for DF 2: one row per model with best checkpoint info and configs
+        model_train_result = results.get("train", [])
+        model_eval_result = results.get("eval", [])
+        for epoch, (train_res, eval_res) in enumerate(
+            zip(model_train_result, model_eval_result), start=1
+        ):
+            train_row = {f"train_{k}": v for k, v in train_res.items()}
+            eval_row = {f"eval_{k}": v for k, v in eval_res.items()}
+            all_model_df_data.append(
+                {"epoch": epoch, **base_model_info, **train_row, **eval_row}
+            )
+
+    best_model_df = pd.DataFrame(best_model_df_data)
+    all_model_df = pd.DataFrame(all_model_df_data)
+
+    saved_paths = None
+    if save_df_as_csv:
+        saved_paths = save_wandb_table(
+            df=[best_model_df, all_model_df],
+            file_name=csv_file_name,
+            wandb_tags=wandb_tags if wandb_tags else [],
+            wandb_run_name=wandb_run_name,
+            save_as_artifact=save_as_wandb_artifact,
+        )
+
+    return {
+        "best_model_df": best_model_df,
+        "all_model_df": all_model_df,
+        "local_saved_paths": saved_paths,
+    }
