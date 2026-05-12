@@ -23,6 +23,8 @@ dataloader:
 training:
     epochs: 5
     device: null # resolved at runtime: cuda if available, else cpu
+    best_model_metric: "auroc" # metric used to determine best model checkpoint
+    recall_threshold: 0.90 # minimum recall threshold for saving model checkpoint to ensure we are not over fitting to precision and losing recall (sensitivity) which is crucial for medical diagnosis
 
 # ── Optimizer ────────────────────────────────────────────────────────────
 optimizer:

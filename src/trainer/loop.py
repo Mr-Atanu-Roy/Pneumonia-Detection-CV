@@ -26,6 +26,8 @@ def train(
     project_name: str,
     epochs: int,
     device: str,
+    best_model_metric: str,
+    recall_threshold: float,
     wandb_tags: Optional[List[str]] = None,
 ) -> Dict:
     """
@@ -35,18 +37,21 @@ def train(
         - Each call to train() is one independent W&B run (finetune after future extraction are 2 different runs)
 
     Args:
-        - train_dataloader  : dataloader for training data
-        - eval_dataloader   : dataloader for evaluation/validation data
-        - model             : model to be trained
-        - loss_fn           : loss function
-        - optimizer         : optimizer
-        - model_name        : architecture name, e.g. "resnet50" (used in       checkpoint filename & W&B)
-        - run_name          : unique run identifier, e.g. "resnet50-tl"
-        - config            : dict of hyperparameters to log in W&B (lr, batch_size, epochs, mode, etc.)
-        - artifacts_dir     : directory where the best checkpoint .pth will be saved.
-        - project_name      : W&B project name (default: "pneumonia-detection")
-        - epochs            : number of training epochs
-        - device            : device to train on
+        - train_dataloader   : dataloader for training data
+        - eval_dataloader    : dataloader for evaluation/validation data
+        - model              : model to be trained
+        - loss_fn            : loss function
+        - optimizer          : optimizer
+        - model_name         : architecture name, e.g. "resnet50" (used in       checkpoint filename & W&B)
+        - run_name           : unique run identifier, e.g. "resnet50-tl"
+        - config             : dict of hyperparameters to log in W&B (lr, batch_size, epochs, mode, etc.)
+        - artifacts_dir      : directory where the best checkpoint .pth will be saved.
+        - project_name       : W&B project name (default: "pneumonia-detection")
+        - epochs             : number of training epochs
+        - device             : device to train on
+        - best_model_metric  : metric used to determine best model checkpoint (e.g. "auroc")
+        - recall_threshold   : minimum recall threshold for saving model checkpoint
+        - wandb_tags         : optional list of W&B tags to add to the run for better organization and filtering
 
     Returns:
         - results (Dict): train and eval metric dicts per epoch, plus path to best checkpoint
@@ -68,7 +73,7 @@ def train(
     # store the train and eval metric of each epoch
     results = {"train": [], "eval": []}
 
-    best_auc = 0.0  # checkpoint creation tracker for best model
+    best_model_metric_value = 0.0  # checkpoint creation tracker for best model
 
     # tqdm bar
     pbar = tqdm(range(1, epochs + 1))
@@ -105,10 +110,13 @@ def train(
             }
         )
 
-        # model checkpoint. Save model if beats current best AUC score and recall > 0.90 to ensure we are not overfitting to precision and losing recall (sensitivity) which is crucial for medical diagnosis
-        current_auc = eval_results["auroc"]
-        if current_auc > best_auc and eval_results["recall"] > 0.90:
-            best_auc = current_auc
+        # model checkpoint. Save model if beats current best AUC score and recall > threshold to ensure we are not overfitting to precision and losing recall (sensitivity) which is crucial for medical diagnosis
+        current_model_metric = eval_results[best_model_metric]
+        if (
+            current_model_metric > best_model_metric_value
+            and eval_results["recall"] > recall_threshold
+        ):
+            best_model_metric_value = current_model_metric
 
             # save the model
             torch.save(
@@ -118,13 +126,14 @@ def train(
                     "run_name": run_name,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "best_auc": best_auc,
+                    "best_model_metric_name": best_model_metric,
+                    "best_model_metric_value": best_model_metric_value,
                 },
                 f=checkpoint_path,
             )
 
             print(
-                f"[INFO] New checkpoint with eval AU-ROC score={best_auc:.4f} & Recall={eval_results['recall']:.4f} saved at {checkpoint_path}"
+                f"[INFO] New checkpoint with eval {best_model_metric} score={best_model_metric_value:.4f} & Recall={eval_results['recall']:.4f} saved at {checkpoint_path}"
             )
         print()
 
@@ -143,7 +152,8 @@ def train(
 
     # store checkpoint path, best f1, total training time to results
     results["checkpoint_path"] = str(checkpoint_path)
-    results["best_eval_auc"] = best_auc
+    results["best_model_metric_name"] = best_model_metric
+    results["best_model_metric_value"] = best_model_metric_value
     results["total_time_sec"] = total_time
 
     return results

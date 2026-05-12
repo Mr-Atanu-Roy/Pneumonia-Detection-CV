@@ -30,6 +30,8 @@ def run_fine_tuning_experiment(
     artifacts_dir: str,
     project_name: str,
     device: str,
+    best_model_metric: str,
+    recall_threshold: float,
     extra_wandb_tags: Optional[List] = None,
 ) -> Dict:
     """
@@ -122,6 +124,8 @@ def run_fine_tuning_experiment(
         project_name=project_name,
         epochs=ft_epochs,
         device=device,
+        best_model_metric=best_model_metric,
+        recall_threshold=recall_threshold,
         wandb_tags=ft_tags,
     )
 

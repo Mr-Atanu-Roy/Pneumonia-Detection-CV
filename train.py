@@ -167,6 +167,18 @@ def parse_args(cfg: dict) -> argparse.Namespace:
         or "auto",  # auto is resolved in main function later
         help="Device to train on. 'auto' resolves to cuda if available, else cpu.",
     )
+    parser.add_argument(
+        "--best-model-metric",
+        type=str,
+        default=c_training["best_model_metric"],
+        help="Metric used to determine the best model checkpoint.",
+    )
+    parser.add_argument(
+        "--recall-threshold",
+        type=float,
+        default=c_training["recall_threshold"],
+        help="Minimum recall threshold for saving model checkpoint.",
+    )
 
     parser.add_argument(
         "--tf-lr",
@@ -270,7 +282,7 @@ def main() -> None:
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print(
-        f"Using device: {args.device}, num_workers: {args.num_workers}, persistent_workers: {args.persistent_workers}...."
+        f"Using device={args.device}, num_workers={args.num_workers}, persistent_workers={args.persistent_workers} ....\n"
     )
 
     from src.trainer.experiment import run_experiment
@@ -297,6 +309,8 @@ def main() -> None:
         n_layers=args.n_layers,
         ft_epochs=args.ft_epochs,
         checkpoint_name=args.checkpoint_name,
+        best_model_metric=args.best_model_metric,
+        recall_threshold=args.recall_threshold,
         extra_wandb_tags=args.wandb_tags,
     )
 

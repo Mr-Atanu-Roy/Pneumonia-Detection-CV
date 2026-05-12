@@ -73,6 +73,8 @@ run_experiment()
 
 import os
 import shutil
+import sys
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -115,6 +117,9 @@ _lr_decay = _cfg["optimizer"]["lr_decay"]
 _n_layers = _cfg["optimizer"]["n_layers"]
 _optimizer_name = _cfg["optimizer"]["optimizer_name"]
 
+_best_model_metric = _cfg["training"]["best_model_metric"]
+_recall_threshold = _cfg["training"]["recall_threshold"]
+
 
 def run_experiment(
     model_name: str,
@@ -145,6 +150,9 @@ def run_experiment(
     # fine tune control
     ft_epochs: Optional[int] = None,
     checkpoint_name: Optional[str] = None,
+    # best model checkpointing control
+    best_model_metric: str = _best_model_metric,
+    recall_threshold: float = _recall_threshold,
     # Optional W&B tags from user
     extra_wandb_tags: Optional[List] = None,
 ):
@@ -191,11 +199,16 @@ def run_experiment(
         - ft_epochs: number of epochs to train for fine tuning
         - checkpoint_name: name of the checkpoint to load for fine tuning. Eg: 'vit_b_16-TL_LR1e-4-EP5-B32.pth'
 
+        - best_model_metric: metric used to determine the best model checkpoint (e.g. "auroc", "accuracy", etc.)
+        - recall_threshold: minimum recall threshold for saving model checkpoint to ensure we are not over fitting
+
     Raises:
         - ValueError : num_workers = 0 and persistent_workers = True (invalid combination)
         - ValueError : mode is not "transfer_learning" or "fine_tuning"
         - ValueError : mode="transfer_learning" and checkpoint_name is given
         - ValueError : mode="fine_tuning" and ft_epochs = None
+        - ValueError : best_model_metric is not in ("recall", "precision", "auroc", "f1_score", "specificity", "accuracy")
+        - ValueError : recall_threshold is not between 0 and 1
         - ValueError : checkpoint_name given and model_name does not match saved model
     """
 
@@ -228,13 +241,31 @@ def run_experiment(
             "  - For fine-tuning a freshly created model (Case D): set `ft_epochs`."
         )
 
+    # 5. best_model_metric must be a valid metric
+    valid_metrics = (
+        "recall",
+        "precision",
+        "auroc",
+        "f1_score",
+        "specificity",
+        "accuracy",
+    )
+    if best_model_metric not in valid_metrics:
+        raise ValueError(
+            f"`best_model_metric` must be one of {valid_metrics} ('{best_model_metric}' given)."
+        )
+
+    # 6. recall_threshold must be between 0 and 1
+    if not (0 <= recall_threshold <= 1):
+        raise ValueError(
+            f"`recall_threshold` must be between 0 and 1 (inclusive) ({recall_threshold} given)."
+        )
+
     # Resolve persistent_workers
     if persistent_workers is None:
         persistent_workers = True if num_workers > 0 else False
 
     # Auto-disable multiprocessing if running in a problematic environment
-    import sys
-    import warnings
 
     if (
         num_workers > 0
@@ -307,6 +338,8 @@ def run_experiment(
             artifacts_dir=artifacts_dir,
             project_name=project_name,
             device=device,
+            best_model_metric=best_model_metric,
+            recall_threshold=recall_threshold,
             extra_wandb_tags=extra_wandb_tags,
         )
 
@@ -387,6 +420,8 @@ def run_experiment(
         artifacts_dir=artifacts_dir,
         project_name=project_name,
         device=device,
+        best_model_metric=best_model_metric,
+        recall_threshold=recall_threshold,
         extra_wandb_tags=extra_wandb_tags,
     )
 
@@ -416,10 +451,12 @@ def _resolve_checkpoint_path(
     """
     Ensures the checkpoint .pth file is available locally and returns its path.
 
-    If the file already exists at ``load_checkpoint`` it is returned as-is.
-    Otherwise the matching W&B artifact (name=``checkpoint_stem``, type='model')
-    is downloaded from ``project_name`` into ``artifacts/models/`` and moved to
-    the canonical flat path ``artifacts/models/<checkpoint_stem>.pth``.
+    If the file already exists at 'load_checkpoint' it is returned as-is.
+    Otherwise the matching W&B artifact (name='checkpoint_stem', type='model')
+    is downloaded from 'project_name' into 'artifacts/models/' and moved to
+    the canonical flat path 'artifacts/models/<checkpoint_stem>.pth'.
+
+    NOTE: Here W&B API is used to prevent creating a run (which is not necessary here)
 
     Args:
         - checkpoint_stem   : bare run-name without extension, e.g. 'vit_b_16-TL_LR1e-4-EP5-B32'

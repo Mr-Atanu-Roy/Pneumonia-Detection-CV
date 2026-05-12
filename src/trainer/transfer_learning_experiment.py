@@ -32,6 +32,8 @@ def run_transfer_learning_experiment(
     artifacts_dir: str,
     project_name: str,
     device: str,
+    best_model_metric: str,
+    recall_threshold: float,
     extra_wandb_tags: Optional[List] = None,
 ) -> Dict:
     """
@@ -108,6 +110,8 @@ def run_transfer_learning_experiment(
         project_name=project_name,
         epochs=epochs,
         device=device,
+        best_model_metric=best_model_metric,
+        recall_threshold=recall_threshold,
         wandb_tags=tl_tags,
     )
 
@@ -161,6 +165,8 @@ def run_transfer_learning_experiment(
         artifacts_dir=artifacts_dir,
         project_name=project_name,
         device=device,
+        best_model_metric=best_model_metric,
+        recall_threshold=recall_threshold,
         extra_wandb_tags=extra_wandb_tags,
     )
 
