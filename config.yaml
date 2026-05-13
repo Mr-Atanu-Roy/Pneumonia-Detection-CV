@@ -6,6 +6,7 @@ paths:
 
 # ── W&B ──────────────────────────────────────────────────────────────────
 wandb:
+    entity: "atanu-roy-none"
     project_name: "pneumonia-detection"
 
 # ── Data ─────────────────────────────────────────────────────────────────
@@ -22,9 +23,10 @@ dataloader:
 # ── Training ─────────────────────────────────────────────────────────────
 training:
     epochs: 5
+    classification_threshold: 0.5 # threshold for converting predicted probabilities to binary class labels for metric calculations
     device: null # resolved at runtime: cuda if available, else cpu
-    best_model_metric: "auroc" # metric used to determine best model checkpoint
-    recall_threshold: 0.90 # minimum recall threshold for saving model checkpoint to ensure we are not over fitting to precision and losing recall (sensitivity) which is crucial for medical diagnosis
+    best_model_metric_name: "composite" # metric used to determine best model checkpoint. For "composite", f1 and auroc are combined using the weights (Eg: 0.7 f1 + 0.3 auroc) to determine best model
+    recall_threshold: 0.90 # minimum recall threshold for saving model checkpoint to ensure we are not over fitting to precision and losing recall (sensitivity) which is crucial for medical diagnosis # !! Not functional yet
 
 # ── Optimizer ────────────────────────────────────────────────────────────
 optimizer:
