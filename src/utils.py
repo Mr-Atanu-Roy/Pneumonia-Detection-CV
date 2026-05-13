@@ -792,11 +792,10 @@ def save_and_track_dataframes(
 
         # Step C — Upload each CSV as its own artifact, reusing the active run
         upload_artifacts_to_wandb(
-            csv_paths=csv_paths,
+            file_paths=csv_paths,
             names=cleaned_names,
             wandb_project=wandb_project,
             artifact_type=artifact_type,
-            dfs_metadata=dfs_list,
             wandb_run_name=run_name,
             wandb_tags=wandb_tags,
             artifact_description=artifact_description,
@@ -972,8 +971,8 @@ def convert_model_training_results_to_df(
         ):  # start counting from 1
             current_model_metric_value = (
                 (
-                    eval_res.get(base_model_info["f1_score"], 0),
-                    eval_res.get(base_model_info["auroc"], 0),
+                    eval_res.get("f1_score", 0),
+                    eval_res.get("auroc", 0),
                 )
                 if base_model_info["best_model_metric_name"] == "composite"
                 else eval_res.get(base_model_info["best_model_metric_name"], 0)
