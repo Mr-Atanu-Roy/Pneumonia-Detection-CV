@@ -168,9 +168,9 @@ def parse_args(cfg: dict) -> argparse.Namespace:
         help="Device to train on. 'auto' resolves to cuda if available, else cpu.",
     )
     parser.add_argument(
-        "--best-model-metric",
+        "--best-model-metric-name",
         type=str,
-        default=c_training["best_model_metric"],
+        default=c_training["best_model_metric_name"],
         help="Metric used to determine the best model checkpoint.",
     )
     parser.add_argument(
@@ -309,7 +309,7 @@ def main() -> None:
         n_layers=args.n_layers,
         ft_epochs=args.ft_epochs,
         checkpoint_name=args.checkpoint_name,
-        best_model_metric=args.best_model_metric,
+        best_model_metric_name=args.best_model_metric_name,
         recall_threshold=args.recall_threshold,
         extra_wandb_tags=args.wandb_tags,
     )

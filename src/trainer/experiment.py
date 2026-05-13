@@ -84,7 +84,12 @@ import wandb
 from ..dataloader import create_dataloaders
 from ..models.models import create_model, create_optimizer, unfreeze_for_finetune
 from ..transform import test_transforms, train_transforms
-from ..utils import load_config, set_seeds
+from ..utils import (
+    download_wandb_artifact,
+    load_config,
+    set_seeds,
+    validate_metric_name,
+)
 from .fine_tuning_experiment import run_fine_tuning_experiment
 from .transfer_learning_experiment import run_transfer_learning_experiment
 
@@ -117,7 +122,7 @@ _lr_decay = _cfg["optimizer"]["lr_decay"]
 _n_layers = _cfg["optimizer"]["n_layers"]
 _optimizer_name = _cfg["optimizer"]["optimizer_name"]
 
-_best_model_metric = _cfg["training"]["best_model_metric"]
+_best_model_metric_name = _cfg["training"]["best_model_metric_name"]
 _recall_threshold = _cfg["training"]["recall_threshold"]
 
 
@@ -151,7 +156,7 @@ def run_experiment(
     ft_epochs: Optional[int] = None,
     checkpoint_name: Optional[str] = None,
     # best model checkpointing control
-    best_model_metric: str = _best_model_metric,
+    best_model_metric_name: str = _best_model_metric_name,
     recall_threshold: float = _recall_threshold,
     # Optional W&B tags from user
     extra_wandb_tags: Optional[List] = None,
@@ -199,7 +204,7 @@ def run_experiment(
         - ft_epochs: number of epochs to train for fine tuning
         - checkpoint_name: name of the checkpoint to load for fine tuning. Eg: 'vit_b_16-TL_LR1e-4-EP5-B32.pth'
 
-        - best_model_metric: metric used to determine the best model checkpoint (e.g. "auroc", "accuracy", etc.)
+        - best_model_metric_name: metric used to determine the best model checkpoint (e.g. "auroc", "accuracy", etc.)
         - recall_threshold: minimum recall threshold for saving model checkpoint to ensure we are not over fitting
 
     Raises:
@@ -207,7 +212,7 @@ def run_experiment(
         - ValueError : mode is not "transfer_learning" or "fine_tuning"
         - ValueError : mode="transfer_learning" and checkpoint_name is given
         - ValueError : mode="fine_tuning" and ft_epochs = None
-        - ValueError : best_model_metric is not in ("recall", "precision", "auroc", "f1_score", "specificity", "accuracy")
+        - ValueError : best_model_metric_name is not in ("recall", "precision", "auroc", "f1_score", "specificity", "accuracy")
         - ValueError : recall_threshold is not between 0 and 1
         - ValueError : checkpoint_name given and model_name does not match saved model
     """
@@ -241,19 +246,8 @@ def run_experiment(
             "  - For fine-tuning a freshly created model (Case D): set `ft_epochs`."
         )
 
-    # 5. best_model_metric must be a valid metric
-    valid_metrics = (
-        "recall",
-        "precision",
-        "auroc",
-        "f1_score",
-        "specificity",
-        "accuracy",
-    )
-    if best_model_metric not in valid_metrics:
-        raise ValueError(
-            f"`best_model_metric` must be one of {valid_metrics} ('{best_model_metric}' given)."
-        )
+    # 5. best_model_metric_name must be a valid metric
+    validate_metric_name(best_model_metric_name)
 
     # 6. recall_threshold must be between 0 and 1
     if not (0 <= recall_threshold <= 1):
@@ -338,7 +332,7 @@ def run_experiment(
             artifacts_dir=artifacts_dir,
             project_name=project_name,
             device=device,
-            best_model_metric=best_model_metric,
+            best_model_metric_name=best_model_metric_name,
             recall_threshold=recall_threshold,
             extra_wandb_tags=extra_wandb_tags,
         )
@@ -349,12 +343,15 @@ def run_experiment(
     if checkpoint_name is not None:
         # Case C: finetune from existing checkpoint
 
-        checkpoint_stem = Path(checkpoint_name).stem
-        checkpoint_path = _model_artifacts_dir / f"{checkpoint_stem}.pth"
-        checkpoint_path = _resolve_checkpoint_path(
-            checkpoint_stem=checkpoint_stem,
-            checkpoint_path=checkpoint_path,
-            project_name=project_name,
+        checkpoint_stem = (
+            Path(checkpoint_name).stem
+        )  # e.g. "vit_b_16-TL_LR1e-4-EP5-B32" from "vit_b_16-TL_LR1e-4-EP5-B32.pth"
+
+        checkpoint_path = download_wandb_artifact(
+            artifact_name=checkpoint_stem,
+            artifact_type="model",
+            version="latest",
+            local_download_path=str(_model_artifacts_dir),
         )
 
         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
@@ -420,7 +417,7 @@ def run_experiment(
         artifacts_dir=artifacts_dir,
         project_name=project_name,
         device=device,
-        best_model_metric=best_model_metric,
+        best_model_metric_name=best_model_metric_name,
         recall_threshold=recall_threshold,
         extra_wandb_tags=extra_wandb_tags,
     )
@@ -441,76 +438,3 @@ def _loss_fn(name="binary_ce", pos_weight: Optional[float] = None):
         return torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     raise ValueError(f"Unknown loss function: '{name}'. Available: ['binary_ce']")
-
-
-def _resolve_checkpoint_path(
-    checkpoint_stem: str,
-    checkpoint_path: Path,
-    project_name: str,
-) -> Path:
-    """
-    Ensures the checkpoint .pth file is available locally and returns its path.
-
-    If the file already exists at 'load_checkpoint' it is returned as-is.
-    Otherwise the matching W&B artifact (name='checkpoint_stem', type='model')
-    is downloaded from 'project_name' into 'artifacts/models/' and moved to
-    the canonical flat path 'artifacts/models/<checkpoint_stem>.pth'.
-
-    NOTE: Here W&B API is used to prevent creating a run (which is not necessary here)
-
-    Args:
-        - checkpoint_stem   : bare run-name without extension, e.g. 'vit_b_16-TL_LR1e-4-EP5-B32'
-        - checkpoint_path   : expected local path (artifacts/models/<stem>.pth)
-        - project_name      : W&B project name used to look up the artifact
-
-    Returns:
-        - Path to the local .pth file, guaranteed to exist.
-
-    Raises:
-        - FileNotFoundError : file is absent locally AND the W&B download fails
-        - FileNotFoundError : downloaded artifact directory contains no .pth file
-    """
-
-    if checkpoint_path.exists():
-        return checkpoint_path
-
-    print(
-        f"[INFO] Checkpoint '{checkpoint_path}' not found locally. "
-        f"Attempting to download artifact '{checkpoint_stem}' from W&B project '{project_name}'…"
-    )
-
-    _api = wandb.Api()
-    try:
-        artifact = _api.artifact(
-            f"{project_name}/{checkpoint_stem}:latest", type="model"
-        )
-        # W&B always downloads into a sub-directory; stage it next to the target.
-        artifact_dir = Path(
-            artifact.download(root=str(checkpoint_path.parent / checkpoint_stem))
-        )
-    except wandb.errors.CommError as exc:
-        raise FileNotFoundError(
-            f"Could not find checkpoint locally at '{checkpoint_path}' and failed to "
-            f"download artifact '{checkpoint_stem}:latest' from W&B project '{project_name}'.\n"
-            f"W&B error: {exc}"
-        ) from exc
-
-    # The artifact was logged with add_file(checkpoint_path) so the .pth file
-    # sits directly inside the downloaded directory.
-    downloaded_pth = next(artifact_dir.glob("*.pth"), None)
-    if downloaded_pth is None:
-        raise FileNotFoundError(
-            f"No .pth file found in the downloaded W&B artifact dir '{artifact_dir}'."
-        )
-
-    # Move to the canonical flat location: artifacts/models/<stem>.pth
-    shutil.move(str(downloaded_pth), str(checkpoint_path))
-
-    # Clean up the now-empty staging sub-directory
-    try:
-        artifact_dir.rmdir()
-    except OSError:
-        pass  # not empty – leave it
-
-    print(f"[INFO] Artifact downloaded and saved to '{checkpoint_path}'.")
-    return checkpoint_path

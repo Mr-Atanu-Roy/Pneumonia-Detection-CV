@@ -1,9 +1,18 @@
 import random
+import shutil
+import warnings
+from collections import Counter
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import torch
+import wandb
+import yaml
+
+# Two artifact types officially recognised by W&B
+VALID_ARTIFACT_TYPES = ("dataset", "model")
 
 
 def set_seeds(seed: int = 42) -> None:
@@ -20,7 +29,90 @@ def set_seeds(seed: int = 42) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-from collections import Counter
+def is_best_model(
+    best_metric_name: str,
+    current_metric_value: Union[float, Tuple[float, float]],
+    best_metric_value: float,
+    recall: float,
+    recall_threshold: float,
+    weights: Tuple[float, float] = (0.7, 0.3),
+) -> Dict[str, Union[bool, float]]:
+    """
+    Determines if the current model is the best model based on the specified metric and recall threshold.
+
+    Args:
+        - best_metric_name (str): Name of the metric used to determine the best model (e.g., "auroc"). For "composite", the metric is calculated as weighted sum Eg: 0.7 f1 + 0.3 auroc.
+        - current_metric_value (float): The value of the specified metric for the current model. If best_metric_name is "composite", this should be a tuple of (f1_score, auroc_score) to calculate the composite score.
+        - best_metric_value (float): The best value of the specified metric observed so far.
+        - recall (float): The recall value for the current model.
+        - recall_threshold (float): The minimum recall threshold required for a model to be considered as the best.
+        - weights (Tuple[float, float]): The weights for the composite metric calculation Eg: (f1_weight, auroc_weight). Only used if best_metric_name is "composite". Default is (0.7, 0.3).
+
+    Returns:
+        - is_best (bool): True if the current model is the best model based on the specified metric and recall threshold, False otherwise.
+        - updated_best_metric_value (float): The updated best metric value after comparing with the current model's metric value.
+
+    Raises:
+        - ValueError: If the best_metric_name is not one of the allowed options.
+    """
+
+    # validate metric name
+    validate_metric_name(best_metric_name)
+
+    # validate that current_metric_value is a float for single metrics and a tuple of (f1, auroc) for composite metric
+    if best_metric_name == "composite":
+        if (
+            not isinstance(current_metric_value, tuple)
+            or len(current_metric_value) != 2
+        ):
+            raise ValueError(
+                "For 'composite' metric, current_metric_value must be a tuple of (f1, auroc)"
+            )
+    else:
+        if not isinstance(current_metric_value, (int, float)):
+            raise ValueError(
+                f"For '{best_metric_name}' metric, current_metric_value must be a float"
+            )
+
+    if best_metric_name == "composite":
+        # for composite metric calculate a weighted score of given metrics using the given weights (Eg: 0.7 f1 + 0.3 auroc) and compare to determine best model
+        metric_1, metric_2 = current_metric_value
+        score = weights[0] * metric_1 + weights[1] * metric_2
+    else:
+        # for single metric, directly compare the metric value to determine best model
+        score = current_metric_value
+
+    is_best = False if score < best_metric_value and recall < recall_threshold else True
+
+    return {
+        "is_best": is_best,
+        "updated_best_metric_value": score if is_best else best_metric_value,
+        "current_metric_value": score,
+    }
+
+
+def validate_metric_name(metric_name: str) -> None:
+    """
+    Validates that the provided metric name is one of the allowed options.
+
+    Args:
+        - metric_name (str): The name of the metric to validate.
+    Raises:
+        - ValueError: If the metric name is not one of the allowed options.
+    """
+    allowed_metrics = [
+        "composite",
+        "auroc",
+        "f1",
+        "precision",
+        "recall",
+        "accuracy",
+        "loss",
+    ]
+    if metric_name not in allowed_metrics:
+        raise ValueError(
+            f"Invalid metric name '{metric_name}'. Allowed options are: {allowed_metrics}"
+        )
 
 
 def get_loader_distribution(loader: torch.utils.data.DataLoader) -> Counter:
@@ -40,9 +132,6 @@ def get_loader_distribution(loader: torch.utils.data.DataLoader) -> Counter:
         counter.update(labels.tolist())
 
     return counter
-
-
-import wandb
 
 
 def wandb_login(platform: str) -> None:
@@ -145,11 +234,6 @@ def build_wandb_config(
     return config
 
 
-from pathlib import Path
-
-import yaml
-
-
 def load_config() -> dict:
     """
     Loads config.yaml from the repo root.
@@ -234,116 +318,501 @@ def _deep_update(original: dict, updates: dict) -> None:
             original[key] = value
 
 
-def _save_single_df_and_log(df: pd.DataFrame, name: str, output_dir: Path) -> str:
+def download_wandb_artifact(
+    artifact_name: str,
+    artifact_type: Literal["model", "dataset"],
+    version: Optional[str] = "latest",
+    local_download_path: Optional[str] = None,
+) -> str:
     """
-    Helper function to save a single DataFrame to CSV and log it as a W&B table.
+    Downloads a W&B artifact by name and saves it as a flat file (no subdirectory) in the specified local directory, then returns the full path to that file.
+
+    Args:
+        - artifact_name: Name of the W&B artifact (e.g. "baseline_model")
+        - artifact_type: W&B artifact type. Must be "model" or "dataset"
+        - version: Artifact version alias. Defaults to "latest"
+        - local_download_path: Local path where the artifact should be downloaded. If None, uses the default path from config.
+
+    Returns:
+        - str: Full local path to the downloaded file e.g. "artifacts/models/baseline_model.pth"
+
+    Raises:
+        - ValueError        : If artifact_type is not "model" or "dataset"
+        - FileNotFoundError : If the artifact is not found in W&B
+        - FileNotFoundError : If the downloaded artifact directory contains no files
     """
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if artifact_type not in VALID_ARTIFACT_TYPES:
+        raise ValueError(
+            f"'artifact_type' must be one of {VALID_ARTIFACT_TYPES}. Got {artifact_type!r}."
+        )
 
-    csv_path = output_dir / f"{name}.csv"
+    cfg = load_config()
+
+    # local path setup
+    local_dir = (
+        Path(local_download_path)
+        if local_download_path
+        else Path(cfg["paths"]["artifacts_dir"])
+        / ("models" if artifact_type == "model" else "results")
+    )
+
+    # create local directory if it doesn't exist
+    local_dir.mkdir(parents=True, exist_ok=True)
+
+    project_name = cfg["wandb"]["project_name"]
+    entry_name = cfg["wandb"]["entity"]
+
+    # Check if already exists locally to prevent unnecessary download and W&B API calls
+    existing = list(local_dir.glob(f"{artifact_name}.*"))
+    if existing:
+        print(
+            f"[INFO] Artifact '{artifact_name}' already exists locally at "
+            f"'{existing[0]}'. Skipping download...."
+        )
+        return str(existing[0])
+
+    # If not found locally, download from W&B using the API (no run created) into a temp directory
+    temp_dir = local_dir / f"_temp_{artifact_name}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    api = wandb.Api()
+    try:
+        artifact = api.artifact(
+            f"{entry_name}/{project_name}/{artifact_name}:{version}", type=artifact_type
+        )
+
+        artifact.download(root=str(temp_dir))
+
+    except wandb.errors.CommError as exc:
+        # Clean up empty staging dir before raising
+        try:
+            temp_dir.rmdir()
+        except OSError:
+            pass
+        raise FileNotFoundError(
+            f"Failed to download artifact '{artifact_name}:{version}' "
+            f"from W&B project '{project_name}'.\n"
+            f"W&B error: {exc}"
+        ) from exc
+
+    # Find the downloaded file
+    # artifact.download() places files flat inside staging_dir
+    downloaded_files = list(temp_dir.iterdir())
+    if not downloaded_files:
+        raise FileNotFoundError(
+            f"Downloaded artifact '{artifact_name}' is empty. "
+            f"Nothing found in staging directory '{temp_dir}'."
+        )
+
+    # Take the first file (each artifact is configured to hold exactly one file)
+    downloaded_file = downloaded_files[0]
+    extension = downloaded_file.suffix  # e.g. ".pth" or ".csv"
+
+    # Move to flat canonical path: local_dir/<artifact_name>.<ext>
+    final_path = local_dir / f"{artifact_name}{extension}"
+    shutil.move(str(downloaded_file), str(final_path))
+
+    try:
+        temp_dir.rmdir()
+    except OSError:
+        pass  # not empty — leave
+
+    print(f"[INFO] Artifact '{artifact_name}' downloaded to: '{final_path}'")
+    return str(final_path)
+
+
+def save_df_to_csv(
+    df: pd.DataFrame,
+    name: str,
+    output_dir: Union[str, Path],
+) -> str:
+    """
+    Saves a single DataFrame to a CSV file in the specified directory.
+    Args:
+        - df         : The DataFrame to save.
+        - name       : Base file name with or without extension (e.g. "train_metrics")
+        - output_dir : Directory in which to write the CSV. Created if absent.
+
+    Returns:
+        - str: The file path to the saved CSV.
+
+    Raises:
+        - TypeError : If df is not a pandas DataFrame.
+        - ValueError: If name is an empty string.
+    """
+
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError(f"Expected a pandas DataFrame, got {type(df).__name__}.")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("'name' must be a non-empty string.")
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    csv_path = output_path / f"{Path(name).stem}.csv"
     df.to_csv(csv_path, index=False)
-    print(f"[INFO] DataFrame saved to {csv_path}")
-    wandb.log({name: wandb.Table(dataframe=df)})
+
+    print(f"[INFO] Saved '{name}' at {csv_path}")
+
     return str(csv_path)
 
 
-def save_wandb_table(
-    df: Union[pd.DataFrame, List[pd.DataFrame]],
-    file_name: Union[str, List[str]],
+def log_dfs_as_wandb_tables(
+    dfs: List[pd.DataFrame],
+    names: List[str],
+    wandb_project: str,
     wandb_run_name: Optional[str] = None,
     wandb_tags: Optional[List[str]] = None,
-    save_as_artifact: bool = True,
-) -> Union[str, List[str]]:
+    active_run: Optional[wandb.sdk.wandb_run.Run] = None,
+) -> None:
     """
-    Saves one or more pd.DataFrame objects to CSV files, logs them as W&B tables
-    under a single W&B run, and optionally uploads them together as a single
-    W&B artifact.
+    Logs multiple DataFrames as W&B Tables in a single wandb.log() call, ensuring all tables appear at the same step in the W&B UI.
 
     Args:
-        - df (pd.DataFrame or list[pd.DataFrame]): DataFrame(s) to save and log
-        - file_name (str or list[str]): Name(s) for the CSV file(s). If a single
-          string is provided it will be used for the single DataFrame. Length of
-          lists for `df` and `file_name` must match.
-        - save_as_artifact (bool): Whether to log the file(s) as a W&B artifact
-          (default: True)
-        - wandb_run_name (str, optional): Name to use for the W&B run. If not
-          provided the first file name is used.
-        - wandb_tags (list[str], optional): Tags to attach to the W&B run.
-
-    Returns:
-        - str or list[str]: Local path(s) to the saved CSV file(s). Returns a
-          single string when a single DataFrame was provided, otherwise a list.
+        - dfs            : List of DataFrames to log as W&B Tables.
+        - names          : List of table names, one per DataFrame.
+        - wandb_project  : W&B project name to log tables into.
+        - wandb_run_name : Display name for the W&B run. Defaults to the first name in 'names' when not provided.
+        - wandb_tags     : Optional list of tags to attach to the W&B run.
+        - active_run     : Pass an already-initialised W&B run to reuse it instead of creating a new one.
 
     Raises:
-        - ValueError: If file_name is empty or if lengths of provided lists don't
-          match.
+        - ValueError: If dfs and names lists have different lengths, or if wandb_project is empty.
+        - TypeError : If any item in dfs is not a DataFrame.
+
+    Example (standalone):
+        log_dfs_as_wandb_tables(
+            dfs=[df_train, df_val],
+            names=["train_metrics", "val_metrics"],
+            wandb_project="my-project",
+            wandb_run_name="table-log-run",
+            wandb_tags=["tables"],
+        )
     """
 
-    # Normalize inputs to lists
-    if isinstance(df, pd.DataFrame):
-        dfs = [df]
-    elif isinstance(df, list):
-        dfs = df
-    else:
-        raise TypeError(f"df must be a DataFrame or list of DataFrames. Got {type(df)}")
-
-    if isinstance(file_name, str):
-        names = [file_name]
-    elif isinstance(file_name, list):
-        names = file_name
-    else:
-        raise TypeError(
-            f"file_name must be a string or list of strings. Got {type(file_name)}"
-        )
-
+    if not wandb_project or not wandb_project.strip():
+        raise ValueError("'wandb_project' must be a non-empty string.")
     if len(dfs) != len(names):
         raise ValueError(
-            f"Number of DataFrames ({len(dfs)}) must match number of file names ({len(names)})"
+            f"Number of DataFrames ({len(dfs)}) must match "
+            f"number of names ({len(names)})."
+        )
+    for i, df in enumerate(dfs):
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError(
+                f"Item at index {i} in 'dfs' is not a DataFrame. "
+                f"Got {type(df).__name__}."
+            )
+
+    run_name = wandb_run_name or names[0]
+    owns_run = active_run is None
+
+    if owns_run:
+        wandb.init(
+            project=wandb_project,
+            name=run_name,
+            tags=wandb_tags,
+            job_type="table-logging",
         )
 
-    # Validate and strip .csv extension if present
-    cleaned_names: List[str] = []
-    for n in names:
-        if not n:
-            raise ValueError(f"file_name cannot be empty. Given: {names}")
-        cleaned_names.append(n[:-4] if n.endswith(".csv") else n)
+    try:
+        # Batch all tables into a single wandb.log() — same step in the UI
+        tables = {name: wandb.Table(dataframe=df) for df, name in zip(dfs, names)}
+        wandb.log(tables)
+        print(f"[INFO] Logged {len(tables)} table(s) to W&B: {list(tables.keys())}")
+    finally:
+        if owns_run:
+            try:
+                wandb.finish()
+            except Exception:
+                pass
 
-    # W&B init (single run for all tables)
-    cfg = load_config()
-    results_artifacts_dir = Path(cfg["paths"]["artifacts_dir"]) / "results"
-    project_name = cfg["wandb"]["project_name"]
-    run_name = wandb_run_name if wandb_run_name else cleaned_names[0]
-    wandb.init(project=project_name, name=run_name, tags=wandb_tags)
+
+def upload_artifacts_to_wandb(
+    file_paths: List[str],
+    names: List[str],
+    wandb_project: str,
+    artifact_type: str = "dataset",
+    wandb_run_name: Optional[str] = None,
+    wandb_tags: Optional[List[str]] = None,
+    artifact_description: Optional[str] = None,
+    active_run: Optional[wandb.sdk.wandb_run.Run] = None,
+) -> None:
+    """
+    Uploads one or more files as independently versioned W&B Artifacts under a single W&B run.
+
+    Each file becomes its own artifact identified by its name, giving each file an independent version history. Only the artifact whose content changes will receive a new version on subsequent uploads.
+
+    Args:
+        - file_paths           : List of local file paths to the files to upload.
+        - names                : List of artifact names, one per file. Each name becomes the artifact's retrieval key (entity/project/name:alias).
+        - wandb_project        : W&B project name to upload artifacts into.
+        - artifact_type        : Type of artifact. Must be "dataset" or "model". Defaults to "dataset".
+        - wandb_run_name       : Display name for the W&B run. Defaults to the first name in 'names' when not provided.
+        - wandb_tags           : Optional list of tags to attach to the W&B run.
+        - artifact_description : Optional human-readable description attached to every artifact uploaded in this call.
+        - active_run           : Pass an already-initialised W&B run to reuse it. Not intended for direct use by callers.
+
+    Raises:
+        - ValueError: If artifact_type is not "dataset" or "model", list lengths mismatch, or wandb_project is empty.
+        - ValueError : If any file path is not a string or if any file does not exist at the specified path.
+        - ValueError: If any name is not a non-empty string, or if there are duplicate names (artifact names must be unique within a project).
+        - ValueError: If any file path has no extension, as the filename (including extension) is used as the artifact's content key.
+
+    Example (standalone):
+        _upload_artifacts_to_wandb(
+            csv_paths=["outputs/train_metrics.csv"],
+            names=["train_metrics"],
+            wandb_project="my-project",
+            artifact_type="dataset",
+            dfs_metadata=[df_train],
+            wandb_run_name="artifact-upload-run",
+            artifact_description="Training metrics export.",
+        )
+
+    Retrieval:
+        api = wandb.Api()
+        artifact = api.artifact("my-project/train_metrics:latest")
+        artifact_dir = artifact.download()
+        df = pd.read_csv(f"{artifact_dir}/train_metrics.csv")
+    """
+
+    # Validate artifact type
+    if artifact_type not in VALID_ARTIFACT_TYPES:
+        raise ValueError(
+            f"'artifact_type' must be one of {VALID_ARTIFACT_TYPES}. "
+            f"Got {artifact_type!r}."
+        )
+
+    # Validate W&B project name: must be non-empty when uploading artifacts
+    if not wandb_project or not wandb_project.strip():
+        raise ValueError("'wandb_project' must be a non-empty string.")
+
+    # Validate list lengths to ensure each file has a corresponding name
+    if len(file_paths) != len(names):
+        raise ValueError(
+            f"Number of file_paths ({len(file_paths)}) must match "
+            f"number of names ({len(names)})."
+        )
+
+    # Validate that names are non-empty strings and unique (artifact names must be unique within a project)
+    if len(names) != len(set(names)):
+        duplicates = [n for n in names if names.count(n) > 1]
+        raise ValueError(
+            f"'names' contains duplicate values: {list(set(duplicates))}. "
+            f"Each artifact must have a unique name."
+        )
+
+    # Validate that each file path has an extension
+    for file_path in file_paths:
+        if not Path(file_path).suffix:
+            raise ValueError(
+                f"File path '{file_path}' has no extension. "
+                f"Please provide the full filename including extension "
+                f"(e.g. 'outputs/model.pth', 'outputs/train_metrics.csv')."
+            )
+
+    run_name = wandb_run_name or names[0]
+    owns_run = active_run is None
+
+    if owns_run:
+        wandb.init(
+            project=wandb_project,
+            name=run_name,
+            tags=wandb_tags,
+            job_type="artifact-upload",
+        )
 
     try:
-        csv_paths: List[str] = []
-        for df_item, name in zip(dfs, cleaned_names):
-            if not isinstance(df_item, pd.DataFrame):
-                raise TypeError("All items in df list must be pandas DataFrame objects")
-            csv_paths.append(
-                _save_single_df_and_log(df_item, name, results_artifacts_dir)
+        for file_path, name in zip(file_paths, names):
+            if not Path(file_path).exists():
+                warnings.warn(
+                    f"[WARNING] File '{file_path}' does not exist. "
+                    f"Skipping upload to W&B for artifact '{name}'.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                continue
+
+            actual_filename = Path(file_path).name
+
+            artifact = wandb.Artifact(
+                name=name,
+                type=artifact_type,
+                description=artifact_description or None,
             )
 
-        # Optionally log all files as a single artifact
-        if save_as_artifact:
-            artifact_name = run_name
-            artifact = wandb.Artifact(name=artifact_name, type="dataset")
-            for path in csv_paths:
-                artifact.add_file(path)
+            artifact.add_file(local_path=file_path, name=actual_filename)
             wandb.log_artifact(artifact)
-            print(
-                f"[INFO] DataFrame(s) logged as W&B artifact with name: {artifact_name}"
-            )
 
-        # Return single path for single input to preserve backwards compatibility
+            print(
+                f"[INFO] Artifact '{name}' ({artifact_type}) uploaded "
+                f"to W&B project '{wandb_project}'."
+            )
+    finally:
+        if owns_run:
+            try:
+                wandb.finish()
+            except Exception:
+                pass
+
+
+def save_and_track_dataframes(
+    dfs: Union[pd.DataFrame, List[pd.DataFrame]],
+    file_names: Union[str, List[str]],
+    output_dir: Union[str, Path],
+    save_as_artifact: bool = True,
+    artifact_type: str = "dataset",
+    wandb_project: Optional[str] = None,
+    wandb_run_name: Optional[str] = None,
+    wandb_tags: Optional[List[str]] = None,
+    artifact_description: Optional[str] = None,
+) -> Union[str, List[str]]:
+    """
+    Saves one or more DataFrames as local CSV files and, when save_as_artifact=True, logs them to W&B as Tables and uploads each as an independently versioned Artifact — all under a single W&B run.
+
+    When save_as_artifact=False, no W&B run is created at all — only local CSV files are written to disk.
+
+    Args:
+        - dfs                  : A single DataFrame or a list of DataFrames.
+        - file_names           : A single name or a list of names (with or without '.csv' extension), one per DataFrame. Each name becomes both the local CSV filename
+                                 and  the W&B artifact name.
+        - output_dir           : Local directory where CSV files are saved.
+        - save_as_artifact     : If True, logs W&B Tables and uploads each CSV as a separate W&B artifact under one run. If False, only local CSVs are written and no
+                                 W&B run is created. Defaults to True.
+        - artifact_type        : "dataset" or "model". Defaults to "dataset".
+        - wandb_run_name       : Display name for the W&B run. Defaults to the first file name when not provided.
+        - wandb_tags           : Optional list of tags for the W&B run.
+        - artifact_description : Optional description attached to every artifact.
+
+    Returns:
+        - str or List[str]: A single path string for a single DataFrame input, or a list of path strings for multiple DataFrame inputs.
+
+    Raises:
+        - TypeError : If inputs contain unexpected types.
+        - ValueError: If list lengths mismatch, names are empty, artifact_type is invalid, or wandb_project is missing when save_as_artifact=True.
+
+    Example:
+        paths = save_and_track_dataframes(
+            dfs=[df_train, df_val],
+            file_names=["train_metrics", "val_metrics"],
+            output_dir="outputs/results",
+            save_as_artifact=True,
+            artifact_type="dataset",
+            wandb_project="my-project",
+            wandb_run_name="data-export",
+            wandb_tags=["export", "metrics"],
+        )
+    """
+
+    # Input normalization: allow single DataFrame and single name, but convert to lists for uniform processing
+    if isinstance(dfs, pd.DataFrame):
+        dfs_list = [dfs]
+    elif isinstance(dfs, list):
+        dfs_list = dfs
+    else:
+        raise TypeError(
+            f"'dfs' must be a DataFrame or list of DataFrames. "
+            f"Got {type(dfs).__name__}."
+        )
+
+    if isinstance(file_names, str):
+        names_list = [file_names]
+    elif isinstance(file_names, list):
+        names_list = file_names
+    else:
+        raise TypeError(
+            f"'file_names' must be a str or list of str. "
+            f"Got {type(file_names).__name__}."
+        )
+
+    # Validate list lengths and types
+    if len(dfs_list) != len(names_list):
+        raise ValueError(
+            f"Number of DataFrames ({len(dfs_list)}) must match "
+            f"number of file names ({len(names_list)})."
+        )
+    for i, item in enumerate(dfs_list):
+        if not isinstance(item, pd.DataFrame):
+            raise TypeError(
+                f"Item at index {i} in 'dfs' is not a DataFrame. "
+                f"Got {type(item).__name__}."
+            )
+    cleaned_names: List[str] = []
+    for i, n in enumerate(names_list):
+        if not isinstance(n, str) or not n.strip():
+            raise ValueError(f"file_names[{i}] is empty or invalid. Got: {n!r}")
+        cleaned_names.append(Path(n).stem)
+
+    # validate artifact_type and W&B project requirements
+    if artifact_type not in VALID_ARTIFACT_TYPES:
+        raise ValueError(
+            f"'artifact_type' must be one of {VALID_ARTIFACT_TYPES}. "
+            f"Got {artifact_type!r}."
+        )
+    if save_as_artifact and not wandb_project:
+        raise ValueError("'wandb_project' must be provided when save_as_artifact=True.")
+
+    # Saving locally only no W&B involvement
+    if not save_as_artifact:
+        csv_paths = [
+            save_df_to_csv(df, name, output_dir)
+            for df, name in zip(dfs_list, cleaned_names)
+        ]
+        print("[INFO] File saved locally without W&B tracking.")
         return csv_paths[0] if len(csv_paths) == 1 else csv_paths
 
+    # Local save + W&B tables + W&B artifacts (single run)
+    run_name = wandb_run_name or cleaned_names[0]
+
+    wandb.init(
+        project=wandb_project,
+        name=run_name,
+        tags=wandb_tags,
+        job_type="data-upload",
+    )
+
+    try:
+        # Step A — Save all CSVs locally first
+        csv_paths = [
+            save_df_to_csv(df, name, output_dir)
+            for df, name in zip(dfs_list, cleaned_names)
+        ]
+
+        # Step B — Log all tables in one batched call, reusing the active run
+        log_dfs_as_wandb_tables(
+            dfs=dfs_list,
+            names=cleaned_names,
+            wandb_project=wandb_project,
+            wandb_run_name=run_name,
+            wandb_tags=wandb_tags,
+            active_run=wandb.run,
+        )
+
+        # Step C — Upload each CSV as its own artifact, reusing the active run
+        upload_artifacts_to_wandb(
+            csv_paths=csv_paths,
+            names=cleaned_names,
+            wandb_project=wandb_project,
+            artifact_type=artifact_type,
+            dfs_metadata=dfs_list,
+            wandb_run_name=run_name,
+            wandb_tags=wandb_tags,
+            artifact_description=artifact_description,
+            active_run=wandb.run,
+        )
+
     finally:
-        wandb.finish()
+        try:
+            wandb.finish()
+        except Exception:
+            pass
+
+    return csv_paths[0] if len(csv_paths) == 1 else csv_paths
 
 
-def convert_results_to_df(
+def convert_model_training_results_to_df(
     training_config: Dict[str, Any],
     exclude_keys: Optional[List[str]] = None,
     save_df_as_csv: bool = True,
@@ -351,9 +820,10 @@ def convert_results_to_df(
         "best_model_results",
         "all_model_results",
     ],
-    wandb_run_name: Optional[str] = "Model_Results_Summary",
+    wandb_run_name: Optional[str] = "model_results_summary",
     wandb_tags: Optional[List[str]] = None,
     save_as_wandb_artifact: bool = True,
+    artifact_description: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Converts a results dict obtained from model training into 2 pandas DataFrame: one for best model checkpoints (eval only) and another for all training metrics (train and eval).
@@ -500,15 +970,25 @@ def convert_results_to_df(
         for epoch, eval_res in enumerate(
             results["eval"], start=1
         ):  # start counting from 1
-            current_best_metric_value = eval_res.get(
-                base_model_info["best_model_metric_name"]
+            current_model_metric_value = (
+                (
+                    eval_res.get(base_model_info["f1_score"], 0),
+                    eval_res.get(base_model_info["auroc"], 0),
+                )
+                if base_model_info["best_model_metric_name"] == "composite"
+                else eval_res.get(base_model_info["best_model_metric_name"], 0)
             )
-            if (
-                current_best_metric_value is not None
-                and current_best_metric_value > best_model_metric_value
-                and eval_res["recall"] > recall_threshold
-            ):
-                best_model_metric_value = current_best_metric_value
+            model_checkpoints = is_best_model(
+                best_metric_name=base_model_info["best_model_metric_name"],
+                current_metric_value=current_model_metric_value,
+                best_metric_value=best_model_metric_value,
+                recall=eval_res.get("recall", 0),
+                recall_threshold=recall_threshold,
+            )
+
+            best_model_metric_value = model_checkpoints["updated_best_metric_value"]
+
+            if model_checkpoints["is_best"]:
                 best_result = {"best_epoch": epoch, **eval_res}
 
         if best_model_metric_value == -1:
@@ -534,12 +1014,19 @@ def convert_results_to_df(
 
     saved_paths = None
     if save_df_as_csv:
-        saved_paths = save_wandb_table(
-            df=[best_model_df, all_model_df],
-            file_name=csv_file_name,
-            wandb_tags=wandb_tags if wandb_tags else [],
-            wandb_run_name=wandb_run_name,
+        results_artifacts_dir = Path(cfg["paths"]["artifacts_dir"]) / "results"
+        project_name = cfg["wandb"]["project_name"]
+
+        saved_paths = save_and_track_dataframes(
+            dfs=[best_model_df, all_model_df],
+            file_names=csv_file_name,
+            output_dir=results_artifacts_dir,
             save_as_artifact=save_as_wandb_artifact,
+            artifact_type="dataset",
+            wandb_project=project_name,
+            wandb_run_name=wandb_run_name,
+            wandb_tags=wandb_tags if wandb_tags else [],
+            artifact_description=artifact_description,
         )
 
     return {

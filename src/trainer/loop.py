@@ -10,6 +10,7 @@ import torch
 import wandb
 from tqdm.auto import tqdm
 
+from ..utils import is_best_model, upload_artifacts_to_wandb
 from .engine import eval_step, train_step
 
 
@@ -26,7 +27,7 @@ def train(
     project_name: str,
     epochs: int,
     device: str,
-    best_model_metric: str,
+    best_model_metric_name: str,
     recall_threshold: float,
     wandb_tags: Optional[List[str]] = None,
 ) -> Dict:
@@ -49,7 +50,7 @@ def train(
         - project_name       : W&B project name (default: "pneumonia-detection")
         - epochs             : number of training epochs
         - device             : device to train on
-        - best_model_metric  : metric used to determine best model checkpoint (e.g. "auroc")
+        - best_model_metric_name  : metric used to determine best model checkpoint (e.g. "auroc")
         - recall_threshold   : minimum recall threshold for saving model checkpoint
         - wandb_tags         : optional list of W&B tags to add to the run for better organization and filtering
 
@@ -110,14 +111,22 @@ def train(
             }
         )
 
-        # model checkpoint. Save model if beats current best AUC score and recall > threshold to ensure we are not overfitting to precision and losing recall (sensitivity) which is crucial for medical diagnosis
-        current_model_metric = eval_results[best_model_metric]
-        if (
-            current_model_metric > best_model_metric_value
-            and eval_results["recall"] > recall_threshold
-        ):
-            best_model_metric_value = current_model_metric
+        # model checkpoint. Save model if beats current best model on the best_model_metric_name and has recall above recall_threshold
+        current_model_metric_value = (
+            (eval_results["f1_score"], eval_results["auroc"])
+            if best_model_metric_name == "composite"
+            else eval_results[best_model_metric_name]
+        )
+        model_checkpoints = is_best_model(
+            best_metric_name=best_model_metric_name,
+            current_metric_value=current_model_metric_value,
+            best_metric_value=best_model_metric_value,
+            recall=eval_results["recall"],
+            recall_threshold=recall_threshold,
+        )
 
+        best_model_metric_value = model_checkpoints["updated_best_metric_value"]
+        if model_checkpoints["is_best"]:
             # save the model
             torch.save(
                 obj={
@@ -126,33 +135,39 @@ def train(
                     "run_name": run_name,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "best_model_metric_name": best_model_metric,
+                    "best_model_metric_name": best_model_metric_name,
                     "best_model_metric_value": best_model_metric_value,
                 },
                 f=checkpoint_path,
             )
 
             print(
-                f"[INFO] New checkpoint with eval {best_model_metric} score={best_model_metric_value:.4f} & Recall={eval_results['recall']:.4f} saved at {checkpoint_path}"
+                f"[INFO] New checkpoint with eval {best_model_metric_name} score={best_model_metric_value:.4f} & Recall={eval_results['recall']:.4f} saved at {checkpoint_path}"
             )
         print()
 
     end_time = timer()
     total_time = end_time - start_time
     print(
-        f"Total training time: {total_time:.3f} seconds (~{round(total_time / 60, 2)} minutes)\n"
+        f"Total training time: {total_time:.3f} seconds (~ {round(total_time / 60, 2)} minutes)\n"
     )
 
     # save model as W&B artifacts
-    model_artifact = wandb.Artifact(name=run_name, type="model")
-    model_artifact.add_file(str(checkpoint_path))
-    wandb.log_artifact(model_artifact)
+    upload_artifacts_to_wandb(
+        file_paths=[str(checkpoint_path)],
+        names=[run_name],
+        artifact_type="model",
+        wandb_run_name=run_name,
+        wandb_project=project_name,
+        artifact_description=f"Best model checkpoint for {run_name} with eval {best_model_metric_name}={best_model_metric_value:.4f} & Recall={eval_results['recall']:.4f}",
+        active_run=wandb.run,
+    )
 
     wandb.finish()
 
     # store checkpoint path, best f1, total training time to results
     results["checkpoint_path"] = str(checkpoint_path)
-    results["best_model_metric_name"] = best_model_metric
+    results["best_model_metric_name"] = best_model_metric_name
     results["best_model_metric_value"] = best_model_metric_value
     results["total_time_sec"] = total_time
 
