@@ -211,7 +211,8 @@ def build_wandb_config(
     n_layers: Optional[int],
     ft_epochs: Optional[int],
     load_checkpoint: Optional[str],
-    extra: Optional[Dict[str, Any]],
+    optimizer_name: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Builds the base W&B config dict capturing all hyperparameters.
@@ -228,8 +229,9 @@ def build_wandb_config(
         "n_layers": n_layers,
         "ft_epochs": ft_epochs,
         "load_checkpoint": load_checkpoint,
+        "optimizer_name": optimizer_name,
     }
-    if extra:
+    if extra is not None:
         config.update(extra)
     return config
 

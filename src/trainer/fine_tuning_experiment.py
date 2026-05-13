@@ -32,6 +32,7 @@ def run_fine_tuning_experiment(
     device: str,
     best_model_metric_name: str,
     recall_threshold: float,
+    optimizer_name: Optional[str] = None,
     extra_wandb_tags: Optional[List] = None,
 ) -> Dict:
     """
@@ -82,6 +83,7 @@ def run_fine_tuning_experiment(
         n_layers=n_layers,
         ft_epochs=ft_epochs,
         load_checkpoint=tl_checkpoint_path,
+        optimizer_name=optimizer_name,
         extra=extra_config,
     )
     ft_config["phase"] = "FT"

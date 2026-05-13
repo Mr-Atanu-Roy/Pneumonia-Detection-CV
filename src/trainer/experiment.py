@@ -370,7 +370,7 @@ def run_experiment(
         print(f"\n[INFO] Loaded checkpoint from '{checkpoint_path}'")
         print(
             f"[INFO] Parent TL run : '{tl_run_name}' "
-            f"(epoch {checkpoint['epoch']}, AU-ROC: {checkpoint['best_auc']:.4f})"
+            f"(epoch {checkpoint['epoch']}, {checkpoint['best_model_metric_name']} score: {checkpoint['best_model_metric_value']:.4f})"
         )
 
         tl_checkpoint_path = checkpoint_path

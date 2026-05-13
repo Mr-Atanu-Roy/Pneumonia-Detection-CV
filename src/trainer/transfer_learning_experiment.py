@@ -70,6 +70,7 @@ def run_transfer_learning_experiment(
         n_layers=n_layers if ft_epochs else None,
         ft_epochs=ft_epochs,
         load_checkpoint=None,
+        optimizer_name=optimizer_name,
         extra=extra_config,
     )
 
@@ -127,7 +128,7 @@ def run_transfer_learning_experiment(
     model.load_state_dict(checkpoint["model_state_dict"])
     print(
         f"\n[INFO] Reloaded best TL weights from '{tl_checkpoint_path}' "
-        f"(epoch {checkpoint['epoch']}, AU-ROC: {checkpoint['best_auc']:.4f})"
+        f"(epoch {checkpoint['epoch']}, {checkpoint['best_model_metric_name']} score: {checkpoint['best_model_metric_value']:.4f})"
     )
 
     # unfreeze last n_layers backbone blocks
@@ -167,6 +168,7 @@ def run_transfer_learning_experiment(
         device=device,
         best_model_metric_name=best_model_metric_name,
         recall_threshold=recall_threshold,
+        optimizer_name=optimizer_name,
         extra_wandb_tags=extra_wandb_tags,
     )
 
