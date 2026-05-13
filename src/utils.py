@@ -82,7 +82,7 @@ def is_best_model(
         # for single metric, directly compare the metric value to determine best model
         score = current_metric_value
 
-    is_best = False if score < best_metric_value and recall < recall_threshold else True
+    is_best = score > best_metric_value and recall >= recall_threshold
 
     return {
         "is_best": is_best,
@@ -966,7 +966,7 @@ def convert_model_training_results_to_df(
         )
 
         # Creating data for DF 1: one row per epoch per model with all train and eval metrics, configs, and checkpoint info
-        best_model_metric_value = -1
+        best_model_metric_value = 0.0
         for epoch, eval_res in enumerate(
             results["eval"], start=1
         ):  # start counting from 1
