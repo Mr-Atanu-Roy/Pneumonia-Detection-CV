@@ -90,6 +90,7 @@ def validate_metric_name(metric_name: str) -> None:
         "f1",
         "precision",
         "recall",
+        "specificity",
         "accuracy",
         "loss",
     ]
