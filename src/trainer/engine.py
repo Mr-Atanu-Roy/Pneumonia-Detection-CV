@@ -51,13 +51,25 @@ class EpochMetrics:
 
     def to(self, device: str) -> "EpochMetrics":
         # move all metrics to the specified device
+
         for field in fields(self):
+            
+            if field.name == "composite":
+                # for composite metric .to() method can't be called so skip it
+                continue
+
             setattr(self, field.name, getattr(self, field.name).to(device))
         return self
 
     def reset(self) -> None:
         # reset all metrics to their initial state
+
         for field in fields(self):
+
+            if field.name == "composite":
+                # for composite metric .reset() method can't be called so skip it
+                continue
+
             getattr(self, field.name).reset()
 
     def update(
@@ -78,6 +90,11 @@ class EpochMetrics:
         """
 
         for field in fields(self):
+
+            if field.name == "composite":
+                # for composite metric .update() method can't be called so skip it
+                continue
+
             metric = getattr(self, field.name)
 
             if field.name == "loss":
@@ -112,10 +129,13 @@ class EpochMetrics:
         - NOTE: the composite is a derived metric so its only computed at the time of compute.
         """
 
+        # compute composite metrics seperatly than other metrics
         result = {
             field.name: getattr(self, field.name).compute().item()
             for field in fields(self)
+            if field.name != "composite"
         }
+
         result["composite"] = (
             composite_weights[0] * result["f1_score"]
             + composite_weights[1] * result["auroc"]
@@ -205,15 +225,6 @@ def eval_step(
     Returns:
         - results (Dict): dictionary containing the evaluation results for the epoch
     """
-
-    metrics = {
-        "recall": BinaryRecall(zero_division=0).to(device),
-        "precision": BinaryPrecision(zero_division=0).to(device),
-        "auroc": BinaryAUROC().to(device),
-        "f1_score": BinaryF1Score(zero_division=0).to(device),
-        "specificity": BinarySpecificity(zero_division=0).to(device),
-        "accuracy": BinaryAccuracy(zero_division=0).to(device),
-    }
 
     metrics.reset()
     metrics.to(device)
