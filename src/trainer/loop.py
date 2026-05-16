@@ -11,7 +11,7 @@ import wandb
 from tqdm.auto import tqdm
 
 from ..utils import is_best_model, upload_artifacts_to_wandb
-from .engine import eval_step, train_step
+from .engine import EpochMetrics, eval_step, train_step
 
 
 def train(
@@ -74,7 +74,7 @@ def train(
     # store the train and eval metric of each epoch
     results = {"train": [], "eval": []}
 
-    best_model_metric_value = 0.0  # checkpoint creation tracker for best model
+    best_model_metric_value = -1.0  # checkpoint creation tracker for best model
 
     # tqdm bar
     pbar = tqdm(range(1, epochs + 1))
@@ -84,15 +84,24 @@ def train(
     for epoch in pbar:
         pbar.set_description(f"Epoch [{epoch}/{epochs}]")
 
+        # Metrics for train and eval step
+        train_metrics = EpochMetrics()
+        eval_metrics = EpochMetrics()
+
         train_results = train_step(
             model=model,
             loss_fn=loss_fn,
             optimizer=optimizer,
             dataloader=train_dataloader,
+            metrics=train_metrics,
             device=device,
         )
         eval_results = eval_step(
-            model=model, loss_fn=loss_fn, dataloader=eval_dataloader, device=device
+            model=model,
+            loss_fn=loss_fn,
+            dataloader=eval_dataloader,
+            metrics=eval_metrics,
+            device=device,
         )
 
         # display the results
@@ -112,14 +121,10 @@ def train(
         )
 
         # model checkpoint. Save model if beats current best model on the best_model_metric_name and has recall above recall_threshold
-        current_model_metric_value = (
-            (eval_results["f1_score"], eval_results["auroc"])
-            if best_model_metric_name == "composite"
-            else eval_results[best_model_metric_name]
-        )
+
         model_checkpoints = is_best_model(
             best_metric_name=best_model_metric_name,
-            current_metric_value=current_model_metric_value,
+            current_metric_value=eval_results[best_model_metric_name],
             best_metric_value=best_model_metric_value,
             recall=eval_results["recall"],
             recall_threshold=recall_threshold,
@@ -127,7 +132,7 @@ def train(
 
         best_model_metric_value = model_checkpoints["updated_best_metric_value"]
         if model_checkpoints["is_best"]:
-            # save the model
+            # save the model if it's the best so far
             torch.save(
                 obj={
                     "epoch": epoch,
@@ -152,7 +157,7 @@ def train(
         f"Total training time: {total_time:.3f} seconds (~ {round(total_time / 60, 2)} minutes)\n"
     )
 
-    # save model as W&B artifacts
+    # save the best model among all epochs as W&B artifacts
     upload_artifacts_to_wandb(
         file_paths=[str(checkpoint_path)],
         names=[run_name],

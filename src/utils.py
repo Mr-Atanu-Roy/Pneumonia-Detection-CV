@@ -31,22 +31,20 @@ def set_seeds(seed: int = 42) -> None:
 
 def is_best_model(
     best_metric_name: str,
-    current_metric_value: Union[float, Tuple[float, float]],
+    current_metric_value: float,
     best_metric_value: float,
     recall: float,
     recall_threshold: float,
-    weights: Tuple[float, float] = (0.7, 0.3),
 ) -> Dict[str, Union[bool, float]]:
     """
     Determines if the current model is the best model based on the specified metric and recall threshold.
 
     Args:
-        - best_metric_name (str): Name of the metric used to determine the best model (e.g., "auroc"). For "composite", the metric is calculated as weighted sum Eg: 0.7 f1 + 0.3 auroc.
-        - current_metric_value (float): The value of the specified metric for the current model. If best_metric_name is "composite", this should be a tuple of (f1_score, auroc_score) to calculate the composite score.
+        - best_metric_name (str): Name of the metric used to determine the best model (e.g., "auroc").
+        - current_metric_value (float): The value of the specified metric for the current model.
         - best_metric_value (float): The best value of the specified metric observed so far.
         - recall (float): The recall value for the current model.
         - recall_threshold (float): The minimum recall threshold required for a model to be considered as the best.
-        - weights (Tuple[float, float]): The weights for the composite metric calculation Eg: (f1_weight, auroc_weight). Only used if best_metric_name is "composite". Default is (0.7, 0.3).
 
     Returns:
         - is_best (bool): True if the current model is the best model based on the specified metric and recall threshold, False otherwise.
@@ -54,40 +52,26 @@ def is_best_model(
 
     Raises:
         - ValueError: If the best_metric_name is not one of the allowed options.
+        - ValueError: If current_metric_value is not a float or int.
     """
 
     # validate metric name
     validate_metric_name(best_metric_name)
 
-    # validate that current_metric_value is a float for single metrics and a tuple of (f1, auroc) for composite metric
-    if best_metric_name == "composite":
-        if (
-            not isinstance(current_metric_value, tuple)
-            or len(current_metric_value) != 2
-        ):
-            raise ValueError(
-                "For 'composite' metric, current_metric_value must be a tuple of (f1, auroc)"
-            )
-    else:
-        if not isinstance(current_metric_value, (int, float)):
-            raise ValueError(
-                f"For '{best_metric_name}' metric, current_metric_value must be a float"
-            )
+    # validate that current_metric_value is a float or int
+    if not isinstance(current_metric_value, (int, float)):
+        raise ValueError(
+            f"For '{best_metric_name}' metric, current_metric_value must be a float"
+        )
 
-    if best_metric_name == "composite":
-        # for composite metric calculate a weighted score of given metrics using the given weights (Eg: 0.7 f1 + 0.3 auroc) and compare to determine best model
-        metric_1, metric_2 = current_metric_value
-        score = weights[0] * metric_1 + weights[1] * metric_2
-    else:
-        # for single metric, directly compare the metric value to determine best model
-        score = current_metric_value
-
-    is_best = score > best_metric_value and recall >= recall_threshold
+    is_best = current_metric_value > best_metric_value and recall >= recall_threshold
 
     return {
         "is_best": is_best,
-        "updated_best_metric_value": score if is_best else best_metric_value,
-        "current_metric_value": score,
+        "updated_best_metric_value": current_metric_value
+        if is_best
+        else best_metric_value,
+        "current_metric_value": current_metric_value,
     }
 
 
@@ -967,21 +951,15 @@ def convert_model_training_results_to_df(
         )
 
         # Creating data for DF 1: one row per epoch per model with all train and eval metrics, configs, and checkpoint info
-        best_model_metric_value = 0.0
+        best_model_metric_value = -1.0
         for epoch, eval_res in enumerate(
             results["eval"], start=1
         ):  # start counting from 1
-            current_model_metric_value = (
-                (
-                    eval_res.get("f1_score", 0),
-                    eval_res.get("auroc", 0),
-                )
-                if base_model_info["best_model_metric_name"] == "composite"
-                else eval_res.get(base_model_info["best_model_metric_name"], 0)
-            )
             model_checkpoints = is_best_model(
                 best_metric_name=base_model_info["best_model_metric_name"],
-                current_metric_value=current_model_metric_value,
+                current_metric_value=eval_res.get(
+                    base_model_info["best_model_metric_name"], 0
+                ),
                 best_metric_value=best_model_metric_value,
                 recall=eval_res.get("recall", 0),
                 recall_threshold=recall_threshold,
