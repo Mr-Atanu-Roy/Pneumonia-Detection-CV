@@ -53,7 +53,6 @@ class EpochMetrics:
         # move all metrics to the specified device
 
         for field in fields(self):
-            
             if field.name == "composite":
                 # for composite metric .to() method can't be called so skip it
                 continue
@@ -65,7 +64,6 @@ class EpochMetrics:
         # reset all metrics to their initial state
 
         for field in fields(self):
-
             if field.name == "composite":
                 # for composite metric .reset() method can't be called so skip it
                 continue
@@ -90,7 +88,6 @@ class EpochMetrics:
         """
 
         for field in fields(self):
-
             if field.name == "composite":
                 # for composite metric .update() method can't be called so skip it
                 continue
@@ -129,7 +126,7 @@ class EpochMetrics:
         - NOTE: the composite is a derived metric so its only computed at the time of compute.
         """
 
-        # compute composite metrics seperatly than other metrics
+        # compute composite metrics separately than other metrics
         result = {
             field.name: getattr(self, field.name).compute().item()
             for field in fields(self)
