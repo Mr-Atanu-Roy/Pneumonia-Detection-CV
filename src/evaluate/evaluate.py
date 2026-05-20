@@ -1,6 +1,6 @@
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 import wandb
@@ -48,6 +48,17 @@ def evaluate_model_checkpoint(
         - ValueError: If the model_name and checkpoint model name do not match
     """
 
+    model_checkpoint_name = Path(
+        model_checkpoint_name
+    ).stem  # remove .pth suffix if given
+
+    print(f"\n{'-' * 80}")
+
+    print(f"PHASE — Evaluating  |  {model_name}")
+    print(f"Checkpoint: {model_checkpoint_name}")
+
+    print(f"{'-' * 80}\n")
+
     # set device and run name defaults
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -64,9 +75,11 @@ def evaluate_model_checkpoint(
 
     project_name = cfg["wandb"]["project_name"]
 
+    class_names = cfg["data"]["class_names"]
+
     # download the model checkpoint from W&B if not found locally
     checkpoint_path = download_wandb_artifact(
-        artifact_name=Path(model_checkpoint_name).stem,
+        artifact_name=model_checkpoint_name,
         artifact_type="model",
         local_download_path=model_artifact_dir,
     )
@@ -120,11 +133,20 @@ def evaluate_model_checkpoint(
             device=device,
             threshold=threshold,
         )
-
-        # Plot and log metrics to W&B
-        plot_and_log_curves(
-            cm=eval_metrics["confusion_matrix"]["cm"],
+        print("[INFO] Model Results: ")
+        print(f"Model Name: {model_name} | Checkpoint Name: {model_checkpoint_name}")
+        print(
+            f"Recall: {eval_metrics['recall']:.5f} | Precision: {eval_metrics['precision']:.5f} | F1 Score: {eval_metrics['f1_score']:.5f} | AUROC: {eval_metrics['auroc']:.5f} | Specificity: {eval_metrics['specificity']:.5f} | Composite Score: {eval_metrics['composite']:.5f}"
         )
+
+        plot_and_log_curves(
+            cm=eval_metrics["confusion_matrix"],
+            pr_curve=eval_metrics["pr_curve"],
+            roc_curve=eval_metrics["roc_curve"],
+            class_names=class_names,
+            active_run=wandb.run if log_to_wandb else None,
+        )
+
     finally:
         # cleanup: finish the W&B run
         if log_to_wandb and wandb.run is not None:
