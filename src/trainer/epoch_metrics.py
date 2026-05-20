@@ -123,6 +123,18 @@ class EpochMetrics:
         # set default composite weights if not provided
         composite_weights = composite_weights or [0.7, 0.3]
 
+        # validate composite_weights len and sum
+        if composite_weights is not None:
+            if len(composite_weights) != 2:
+                raise ValueError(
+                    f"composite_weights must be a list of 2 floats. Given: {composite_weights}"
+                )
+
+            if not abs(sum(composite_weights) - 1.0) < 1e-6:
+                raise ValueError(
+                    f"composite_weights must sum to 1. Given: {composite_weights} with sum {sum(composite_weights)}"
+                )
+
         # compute composite metrics separately than other metrics
         result = {
             field.name: getattr(self, field.name).compute().item()
