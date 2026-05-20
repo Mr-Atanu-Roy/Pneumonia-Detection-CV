@@ -11,7 +11,8 @@ import wandb
 from tqdm.auto import tqdm
 
 from ..utils import is_best_model, upload_artifacts_to_wandb
-from .engine import EpochMetrics, eval_step, train_step
+from .engine import eval_step, train_step
+from .epoch_metrics import EpochMetrics
 
 
 def train(
