@@ -52,13 +52,6 @@ def evaluate_model_checkpoint(
         model_checkpoint_name
     ).stem  # remove .pth suffix if given
 
-    print(f"\n{'-' * 80}")
-
-    print(f"PHASE — Evaluating  |  {model_name}")
-    print(f"Checkpoint: {model_checkpoint_name}")
-
-    print(f"{'-' * 80}\n")
-
     # set device and run name defaults
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -66,6 +59,15 @@ def evaluate_model_checkpoint(
         run_name
         or f"eval_{model_checkpoint_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     )
+
+    print(f"\n{'-' * 80}")
+
+    print(f"PHASE — Evaluating  |  {model_name}")
+    print(f"Checkpoint: {model_checkpoint_name}")
+
+    print(f"{'-' * 80}\n")
+
+    print(f"[INFO] Using device {device}\n")
 
     # load config for default paths and W&B project name
     cfg = load_config()
@@ -140,8 +142,8 @@ def evaluate_model_checkpoint(
         )
 
         plot_and_log_curves(
-            cm=eval_metrics["confusion_matrix"],
-            pr_curve=eval_metrics["pr_curve"],
+            cm=eval_metrics["confusion_matrix"]["cm"],
+            pr_curve=eval_metrics["precision_recall_curve"],
             roc_curve=eval_metrics["roc_curve"],
             class_names=class_names,
             active_run=wandb.run if log_to_wandb else None,
