@@ -7,9 +7,9 @@ import wandb
 from tqdm.auto import tqdm
 
 from ..models import models
+from ..plots import plot_and_log_curves
 from ..utils import download_wandb_artifact, load_config
 from .evaluation_metrics import EvaluationMetrics
-from .plots import plot_and_log_curves
 
 
 def evaluate_model_checkpoint(
