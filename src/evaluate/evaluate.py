@@ -7,7 +7,7 @@ import wandb
 from tqdm.auto import tqdm
 
 from ..models import models
-from ..plots import plot_and_log_curves
+from ..plots import plot_and_log_evaluation_result
 from ..utils import download_wandb_artifact, load_config
 from .evaluation_metrics import EvaluationMetrics
 
@@ -141,7 +141,7 @@ def evaluate_model_checkpoint(
             f"Recall: {eval_metrics['recall']:.5f} | Precision: {eval_metrics['precision']:.5f} | F1 Score: {eval_metrics['f1_score']:.5f} | AUROC: {eval_metrics['auroc']:.5f} | Specificity: {eval_metrics['specificity']:.5f} | Composite Score: {eval_metrics['composite']:.5f}"
         )
 
-        plot_and_log_curves(
+        plot_and_log_evaluation_result(
             cm=eval_metrics["confusion_matrix"]["cm"],
             pr_curve=eval_metrics["precision_recall_curve"],
             roc_curve=eval_metrics["roc_curve"],
