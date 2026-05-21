@@ -1,11 +1,14 @@
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import torch
 import wandb
+from pytorch_grad_cam import EigenCAM, GradCAM, GradCAMPlusPlus
+from pytorch_grad_cam.utils.image import show_cam_on_image
+from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from sklearn.metrics import auc
 
 from .transform import IMAGENET_MEAN, IMAGENET_STD
@@ -30,7 +33,7 @@ def denormalize(tensor: torch.Tensor) -> np.ndarray:
     std = torch.tensor(IMAGENET_STD)
     mean = torch.tensor(IMAGENET_MEAN)
 
-    # clone to avoide modifying original tensor
+    # clone to avoid modifying original tensor
     image = tensor.clone()
 
     # denormalize: (image * std) + mean
@@ -214,3 +217,226 @@ def plot_and_log_evaluation_result(
         return
 
     print(f"\n[INFO] Logging plots to W&B run: {active_run.name}...\n")
+
+    # !! TODO: log to wandb
+
+
+def plot_grad_cams(
+    model: torch.nn.Module,
+    target_layers: List[torch.nn.Module],
+    samples: Dict[str, Dict[str, torch.Tensor]],
+    class_names: List[str],
+    device: Optional[str] = None,
+    only_grad_cam: bool = False,
+):
+    """
+    Plots Grad-CAM, GradCAM++, and EigenCAM for K TP, FP, FN, TN cases random samples from the dataloader. If only_grad_cam is True, only plots Grad-CAM.
+
+    Args:
+        - model (torch.nn.Module): The trained model for which Grad-CAM is to be computed.
+        - target_layers (List[torch.nn.Module]): List of layers for which to compute Grad-CAM.
+        - samples (Dict[str, Dict[str, torch.Tensor]]): Dictionary of sample dictionaries containing "transformed_image_tensor", "true_label", and "pred_prob" for each of the four cases (TP, FP, FN, TN).
+         Each case (TP, FP, FN, TN) should have a dictionary with the following keys:
+            - "transformed_image_tensor": Tensor of shape (K, C, H, W) containing the transformed images ready for model input.
+            - "true_label": Tensor of shape (K,) containing the true labels for the samples.
+            - "pred_prob": Tensor of shape (K,) containing the predicted probabilities for the positive class for the samples.
+        - class_names (List[str]): List of class names corresponding to the labels.
+        - k (int): The number of random samples to plot for each case (TP, FP, FN, TN). Defaults to 5.
+        - device (str, optional): The device to run the computations on (e.g., "cuda" or "cpu"). If None, automatically selects "cuda" if available. Defaults to None.
+        - only_grad_cam (bool): If True, only plots Grad-CAM. If False, plots Grad-CAM, GradCAM++, and EigenCAM. Defaults to False.
+    """
+
+    # Set device
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+    model.to(device)
+    model.eval()
+
+    # Initialize Grad-CAM with the model and target layers
+    cam = GradCAM(
+        model=model,
+        target_layers=target_layers,
+    )
+
+    # Copy the sample dictionary to avoid modifying the original
+    samples_copy = samples.copy()
+
+    # calculate Grad-CAM for each case and store it in samples_copy[case]["grad_cam"]
+    for case, sample_dict in samples_copy.items():
+        samples_copy[case]["grad_cam"] = _calculate_grad_cam(
+            cam, sample_dict["transformed_image_tensor"]
+        )
+
+    # Plot the original and Grad-CAM images for each case over a grid of 4 rows (TP, FP, FN, TN) and K columns (random samples). Where each item in row will have: original image and Grad-CAM image side by side.
+    plot_gradcam_samples(
+        samples=samples_copy,
+        class_names=class_names,
+    )
+
+
+def _calculate_grad_cam(cam: GradCAM, input_tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Helper function to calculate Grad-CAM for a given input tensor.
+    """
+
+    if input_tensor.ndim == 3:
+        input_tensor = input_tensor.unsqueeze(0)  # Add batch dimension if missing
+
+    return cam(input_tensor=input_tensor, targets=None)
+
+
+def plot_gradcam_samples(
+    samples: Dict[str, Dict[str, torch.Tensor]],
+    class_names: List[str],
+    figsize_scale: Tuple[int, int] = (5, 4),
+):
+    """
+    Plot GradCAM visualizations for TP, FP, FN, TN samples.
+
+    Expected structure:
+    samples_copy = {
+        "TP": {
+            "transformed_image_tensor": Tensor[B, C, H, W],
+            "true_label": Tensor[B],
+            "pred_label": Tensor[B],
+            "pred_prob": Tensor[B],
+            "grad_cam": Tensor/ndarray[B, H, W]
+        },
+        ...
+    }
+    """
+
+    print("\n[INFO] Plotting Grad-CAM visualizations for TP, FP, FN, TN samples...\n")
+
+    sns.set_theme(style="white")
+
+    cases = ["TP", "FP", "FN", "TN"]
+
+    # Maximum samples among all cases
+    num_samples = max(
+        samples[case]["transformed_image_tensor"].shape[0] for case in cases
+    )
+
+    num_cases = len(cases)
+
+    # 2 columns per sample -> Original + GradCAM
+    total_cols = num_samples * 2
+
+    fig, axes = plt.subplots(
+        nrows=num_cases,
+        ncols=total_cols,
+        figsize=(total_cols * figsize_scale[0], num_cases * figsize_scale[1]),
+        squeeze=False,
+    )
+
+    fig.suptitle(
+        "GradCAM Visualization of Samples",
+        fontsize=25,
+        fontweight="bold",
+        y=1.02,
+    )
+
+    for row_idx, case in enumerate(cases):
+        data = samples[case]
+
+        images = data["transformed_image_tensor"]
+        true_labels = data["true_label"]
+        pred_labels = data["pred_label"]
+        pred_probs = data["pred_prob"]
+        gradcams = data["grad_cam"]
+
+        batch_size = images.shape[0]
+
+        # Row heading
+        axes[row_idx, 0].text(
+            -0.35,
+            0.5,
+            case,
+            fontsize=22,
+            fontweight="bold",
+            rotation=90,
+            va="center",
+            ha="center",
+            transform=axes[row_idx, 0].transAxes,
+        )
+
+        for sample_idx in range(num_samples):
+            orig_ax = axes[row_idx, sample_idx * 2]
+            cam_ax = axes[row_idx, sample_idx * 2 + 1]
+
+            # Empty slots
+            if sample_idx >= batch_size:
+                orig_ax.axis("off")
+                cam_ax.axis("off")
+                continue
+
+            single_img = images[sample_idx]
+            grayscale_cam = gradcams[sample_idx]
+
+            if torch.is_tensor(grayscale_cam):
+                grayscale_cam = grayscale_cam.detach().cpu().numpy()
+
+            true_label = int(true_labels[sample_idx].item())
+            pred_label = int(pred_labels[sample_idx].item())
+            pred_prob = float(pred_probs[sample_idx].item())
+
+            # Denormalized image
+            denorm_img = denormalize(single_img)
+
+            # GradCAM overlay
+            cam_image = show_cam_on_image(
+                denorm_img,
+                grayscale_cam,
+                use_rgb=True,
+            )
+
+            metadata_text = (
+                f"Actual: {class_names[true_label]}\n"
+                f"Predicted: {class_names[pred_label]}\n"
+                f"Prediction Probability: {pred_prob:.3f}"
+            )
+
+            # ---------------- ORIGINAL ----------------
+            orig_ax.imshow(denorm_img)
+
+            orig_ax.set_title(
+                "Original",
+                fontsize=14,
+                fontweight="bold",
+            )
+
+            orig_ax.text(
+                0.5,
+                -0.12,
+                metadata_text,
+                fontsize=11,
+                ha="center",
+                va="top",
+                transform=orig_ax.transAxes,
+            )
+
+            orig_ax.axis("off")
+
+            # ---------------- GRADCAM ----------------
+            cam_ax.imshow(cam_image)
+
+            cam_ax.set_title(
+                "GradCAM",
+                fontsize=14,
+                fontweight="bold",
+            )
+
+            cam_ax.text(
+                0.5,
+                -0.12,
+                metadata_text,
+                fontsize=11,
+                ha="center",
+                va="top",
+                transform=cam_ax.transAxes,
+            )
+
+            cam_ax.axis("off")
+
+    plt.tight_layout()
+    plt.show()

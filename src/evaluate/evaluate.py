@@ -1,13 +1,17 @@
+import random
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import wandb
+from PIL import Image
 from tqdm.auto import tqdm
 
 from ..models import models
-from ..plots import plot_and_log_evaluation_result
+from ..plots import plot_and_log_evaluation_result, plot_grad_cams
+from ..transform import test_transforms
 from ..utils import download_wandb_artifact, load_config
 from .evaluation_metrics import EvaluationMetrics
 
@@ -141,12 +145,32 @@ def evaluate_model_checkpoint(
             f"Recall: {eval_metrics['recall']:.5f} | Precision: {eval_metrics['precision']:.5f} | F1 Score: {eval_metrics['f1_score']:.5f} | AUROC: {eval_metrics['auroc']:.5f} | Specificity: {eval_metrics['specificity']:.5f} | Composite Score: {eval_metrics['composite']:.5f}"
         )
 
+        # CM, ROC, PR Curve plotting and logging to W&B
         plot_and_log_evaluation_result(
             cm=eval_metrics["confusion_matrix"]["cm"],
             pr_curve=eval_metrics["precision_recall_curve"],
             roc_curve=eval_metrics["roc_curve"],
             class_names=class_names,
             active_run=wandb.run if log_to_wandb else None,
+        )
+
+        # unfreeze last model layer for Grad-CAM visualization
+        models.unfreeze_for_finetune(model_name=model_name, model=model, n_layers=1)
+
+        # get K random samples for each of the 4 cases: TP, FP, FN, TN for Grad-CAM visualization
+        selected_samples = _get_selected_samples(
+            dataloader=dataloader,
+            true_label=torch.tensor(eval_metrics["all_true_labels"]),
+            pred_label=torch.tensor(eval_metrics["all_pred_labels"]),
+            pred_probs=torch.tensor(eval_metrics["all_pred_probs"]),
+            k=5,
+        )
+        plot_grad_cams(
+            model=model,
+            target_layers=_resolve_target_layers(model_name=model_name, model=model),
+            samples=selected_samples,
+            class_names=class_names,
+            device=device,
         )
 
     finally:
@@ -202,3 +226,93 @@ def _evaluate_step(
             )
 
     return metrics.compute()
+
+
+def _resolve_target_layers(
+    model_name: str, model: torch.nn.Module
+) -> List[torch.nn.Module]:
+    """
+    Helper function to return the target layers for Grad-CAM based on the model name and architecture.
+    """
+
+    model_name = model_name.lower()
+
+    target_layer_resolvers = {
+        "resnet50": lambda m: [m.layer4[-1]],
+        "densenet121": lambda m: [m.features.denseblock4],
+        "efficientnet_b2": lambda m: [m.features[-1]],
+        "vit_b_16": lambda m: [m.blocks[-1].norm1],
+    }
+
+    if model_name in target_layer_resolvers:
+        return target_layer_resolvers[model_name](model)
+
+    raise ValueError(
+        f"Unsupported model_name '{model_name}' for Grad-CAM target layer resolution."
+    )
+
+
+def _get_selected_samples(
+    dataloader: torch.utils.data.DataLoader,
+    true_label: torch.Tensor,
+    pred_label: torch.Tensor,
+    pred_probs: torch.Tensor,
+    k: int = 5,
+):
+    """
+    Helper function to get K random samples for each of the 4 cases: TP, FP, FN, TN called by evaluate_model_checkpoint().
+    Returns: Dict with keys "TP", "FP", "FN", "TN" and values as list of tuples (image_path, label, pred_prob) for K random samples of each case.
+    """
+
+    # Get the list of index for all cases
+    tp_idx = torch.where((true_label == 1) & (pred_label == 1))[0]
+    fn_idx = torch.where((true_label == 1) & (pred_label == 0))[0]
+    fp_idx = torch.where((true_label == 0) & (pred_label == 1))[0]
+    tn_idx = torch.where((true_label == 0) & (pred_label == 0))[0]
+
+    # Randomly select K indices from above list
+    # If list is of length > K then select K samples otherwise select whole list
+    random_tp_idx = (
+        random.sample(tp_idx.tolist(), k) if len(tp_idx) > k else tp_idx.tolist()
+    )
+    random_fn_idx = (
+        random.sample(fn_idx.tolist(), k) if len(fn_idx) > k else fn_idx.tolist()
+    )
+    random_fp_idx = (
+        random.sample(fp_idx.tolist(), k) if len(fp_idx) > k else fp_idx.tolist()
+    )
+    random_tn_idx = (
+        random.sample(tn_idx.tolist(), k) if len(tn_idx) > k else tn_idx.tolist()
+    )
+
+    data_samples = dataloader.dataset.samples
+
+    return {
+        "TP": _build_batch(random_tp_idx, data_samples, pred_probs, pred_label),
+        "FP": _build_batch(random_fp_idx, data_samples, pred_probs, pred_label),
+        "FN": _build_batch(random_fn_idx, data_samples, pred_probs, pred_label),
+        "TN": _build_batch(random_tn_idx, data_samples, pred_probs, pred_label),
+    }
+
+
+def _build_batch(
+    indices: List[int],
+    data_samples: List[Tuple[str, int]],
+    pred_probs: torch.Tensor,
+    pred_label: torch.Tensor,
+):
+
+    return {
+        # "image_paths": [data_samples[i][0] for i in indices],
+        "transformed_image_tensor": torch.stack(
+            [
+                test_transforms(
+                    image=np.array(Image.open(data_samples[i][0]).convert("RGB"))
+                )["image"]
+                for i in indices
+            ]
+        ),
+        "true_label": torch.stack([torch.tensor(data_samples[i][1]) for i in indices]),
+        "pred_prob": torch.stack([pred_probs[i] for i in indices]),
+        "pred_label": torch.stack([pred_label[i] for i in indices]),
+    }
