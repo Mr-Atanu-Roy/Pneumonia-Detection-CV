@@ -20,7 +20,7 @@ class EpochMetrics:
 
     - loss: MeanMetrics - accumulates the mean loss over batches.
     - auroc: BinaryAUROC - updated with raw logits (raw model o/p), not preds
-    - recall, precision, auroc, f1_score, specificity, accuracy: Updated with preds (after applying threshold)
+    - recall, precision, f1_score, specificity, accuracy: Updated with preds (after applying threshold)
     """
 
     composite: float = None
