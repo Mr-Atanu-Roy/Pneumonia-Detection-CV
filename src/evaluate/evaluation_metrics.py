@@ -19,21 +19,22 @@ class EvaluationMetrics:
     - precision_recall_curve: BinaryPrecisionRecallCurve - updated with raw logits (raw model o/p), not preds
     - roc_curve: BinaryROC - updated with raw logits (raw model o/p), not preds
     - epoch_metrics: Contains all the metrics from engine.py (loss, auroc, f1_score, recall, precision, specificity, accuracy)
-    - all_probs: List of per-batch predicted probabilities (after sigmoid), concatenated at compute time
-    - all_preds: List of per-batch predicted labels (after thresholding), concatenated at compute time
+    - all_pred_probs: List of per-batch predicted probabilities (after sigmoid), concatenated at compute time
+    - all_pred_labels: List of per-batch predicted labels (after thresholding), concatenated at compute time
+    - all_true_labels: List of per-batch true labels, concatenated at compute time
     """
 
     confusion_matrix: BinaryConfusionMatrix = None
     precision_recall_curve: BinaryPrecisionRecallCurve = None
     roc_curve: BinaryROC = None
     epoch_metrics: EpochMetrics = None
-    all_probs: List[torch.Tensor] = None
-    all_preds: List[torch.Tensor] = None
+    all_pred_probs: List[torch.Tensor] = None
+    all_pred_labels: List[torch.Tensor] = None
     all_true_labels: List[torch.Tensor] = None
 
     # Fields that are plain Python lists, not torchmetrics objects
     _LIST_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"all_probs", "all_preds", "all_true_labels"}
+        {"all_pred_probs", "all_pred_labels", "all_true_labels"}
     )
 
     def __post_init__(self):
@@ -42,8 +43,8 @@ class EvaluationMetrics:
         self.precision_recall_curve = BinaryPrecisionRecallCurve()
         self.roc_curve = BinaryROC(thresholds=None)
         self.epoch_metrics = EpochMetrics()
-        self.all_probs: List[torch.Tensor] = []
-        self.all_preds: List[torch.Tensor] = []
+        self.all_pred_probs: List[torch.Tensor] = []
+        self.all_pred_labels: List[torch.Tensor] = []
         self.all_true_labels: List[torch.Tensor] = []
 
     def to(self, device: str) -> "EvaluationMetrics":
@@ -93,10 +94,10 @@ class EvaluationMetrics:
                     pred_labels=pred_labels,
                     true_labels=true_labels,
                 )
-            elif field.name == "all_probs":
-                self.all_probs.append(torch.sigmoid(pred_logits).detach().cpu())
-            elif field.name == "all_preds":
-                self.all_preds.append(pred_labels.detach().cpu())
+            elif field.name == "all_pred_probs":
+                self.all_pred_probs.append(torch.sigmoid(pred_logits).detach().cpu())
+            elif field.name == "all_pred_labels":
+                self.all_pred_labels.append(pred_labels.detach().cpu())
             elif field.name == "all_true_labels":
                 self.all_true_labels.append(true_labels.detach().cpu())
             else:
@@ -135,8 +136,8 @@ class EvaluationMetrics:
                     "tpr": [...],
                     "thresholds": [...]
                 },
-                "all_probs": [...],  # list of predicted probabilities for the positive class (after sigmoid)
-                "all_preds": [...]   # list of predicted labels (after thresholding),
+                "all_pred_probs": [...],  # list of predicted probabilities for the positive class (after sigmoid)
+                "all_pred_labels": [...]   # list of predicted labels (after thresholding),
                 "all_true_labels": [...]  # list of true labels
             }
         """
@@ -155,8 +156,14 @@ class EvaluationMetrics:
         fpr, tpr, roc_thresholds = self.roc_curve.compute()
 
         # Concatenate accumulated per-batch lists into single tensors
-        all_probs = torch.cat(self.all_probs) if self.all_probs else torch.tensor([])
-        all_preds = torch.cat(self.all_preds) if self.all_preds else torch.tensor([])
+        all_pred_probs = (
+            torch.cat(self.all_pred_probs) if self.all_pred_probs else torch.tensor([])
+        )
+        all_pred_labels = (
+            torch.cat(self.all_pred_labels)
+            if self.all_pred_labels
+            else torch.tensor([])
+        )
         all_true_labels = (
             torch.cat(self.all_true_labels)
             if self.all_true_labels
@@ -186,7 +193,7 @@ class EvaluationMetrics:
                 if roc_thresholds is not None
                 else None,
             },
-            "all_probs": all_probs.tolist(),
-            "all_preds": all_preds.tolist(),
+            "all_pred_probs": all_pred_probs.tolist(),
+            "all_pred_labels": all_pred_labels.tolist(),
             "all_true_labels": all_true_labels.tolist(),
         }
