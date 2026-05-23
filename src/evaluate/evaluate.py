@@ -11,6 +11,7 @@ from tqdm.auto import tqdm
 
 from ..models import models
 from ..plots import plot_and_log_evaluation_result, plot_grad_cams
+from ..trainer.experiment import create_loss_fn
 from ..transform import test_transforms
 from ..utils import download_wandb_artifact, load_config
 from .evaluation_metrics import EvaluationMetrics
@@ -20,7 +21,6 @@ def evaluate_model_checkpoint(
     model_name: str,
     model_checkpoint_name: str,
     dataloader: torch.utils.data.DataLoader,
-    loss_fn: torch.nn.Module,
     threshold: float = 0.5,
     model_artifact_dir: Optional[Union[str, Path]] = None,
     device: Optional[str] = None,
@@ -36,7 +36,6 @@ def evaluate_model_checkpoint(
         - model_name (str): Name of the model (eg: "resNet50").
         - model_checkpoint_name (str): Name of the model checkpoint file (e.g. "resnet50-EP5-B32.pth"). Download the checkpoint from W&B if not found locally.
         - dataloader (torch.utils.data.DataLoader): DataLoader for multiple samples to evaluate on.
-        - loss_fn (torch.nn.Module): Loss function to compute the loss on the evaluation dataset.
         - threshold (float, optional): Classification threshold for converting predicted probabilities to binary labels.    Default is 0.5.
         - model_artifact_dir (str or Path): Local directory where model checkpoints are stored. Defaults to the "models" subdirectory within the artifacts directory specified in the config file.
         - device (str, optional): Device to run the evaluation on (e.g. "cuda" or "cpu"). If None, automatically selects "cuda" if available.
@@ -82,6 +81,9 @@ def evaluate_model_checkpoint(
     project_name = cfg["wandb"]["project_name"]
 
     class_names = cfg["data"]["class_names"]
+
+    pos_weight = torch.tensor(cfg["training"]["pos_weight"], device=device)
+    loss_fn = create_loss_fn(name="binary_ce", pos_weight=pos_weight)
 
     # download the model checkpoint from W&B if not found locally
     checkpoint_path = download_wandb_artifact(
