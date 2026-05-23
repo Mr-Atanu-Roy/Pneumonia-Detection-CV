@@ -27,6 +27,7 @@ def evaluate_model_checkpoint(
     log_to_wandb: bool = True,
     run_name: Optional[str] = None,
     wandb_tags: Optional[List[str]] = None,
+    use_seed: bool = False,
 ) -> Dict[str, float]:
     """
     Evaluates the given model checkpoint on the provided dataloader and saves the results into wandb.
@@ -41,6 +42,8 @@ def evaluate_model_checkpoint(
         - device (str, optional): Device to run the evaluation on (e.g. "cuda" or "cpu"). If None, automatically selects "cuda" if available.
         - log_to_wandb (bool, optional): Whether to log the evaluation results to W&B. Defaults to True.
         - run_name (str, optional): Name for the W&B run when logging evaluation results. Defaults to the model checkpoint name_current_datetime.
+        - wandb_tags (List[str], optional): List of additional tags to add to the W&B run. Defaults to None.
+        - use_seed (bool, optional): If True, uses a fixed seed (42) for reproducible sample selection for Grad-CAM visualization. Defaults to False.
 
     Returns:
         - Dict[str, float]: Evaluation metrics
@@ -82,7 +85,7 @@ def evaluate_model_checkpoint(
 
     class_names = cfg["data"]["class_names"]
 
-    pos_weight = torch.tensor(cfg["training"]["pos_weight"], device=device)
+    pos_weight = torch.tensor(cfg["data"]["pos_weight"], device=device)
     loss_fn = create_loss_fn(name="binary_ce", pos_weight=pos_weight)
 
     # download the model checkpoint from W&B if not found locally
@@ -153,6 +156,7 @@ def evaluate_model_checkpoint(
             pr_curve=eval_metrics["precision_recall_curve"],
             roc_curve=eval_metrics["roc_curve"],
             class_names=class_names,
+            model_name=model_name,
             active_run=wandb.run if log_to_wandb else None,
         )
 
@@ -166,12 +170,25 @@ def evaluate_model_checkpoint(
             pred_label=torch.tensor(eval_metrics["all_pred_labels"]),
             pred_probs=torch.tensor(eval_metrics["all_pred_probs"]),
             k=5,
+            use_seed=use_seed,
         )
+
+        # get 5 fixed samples from the dataset (model-independent, always seeded)
+        # These are the same across all model evaluations for cross-model comparison.
+        fixed_samples = _get_fixed_samples(
+            dataloader=dataloader,
+            pred_label=torch.tensor(eval_metrics["all_pred_labels"]),
+            pred_probs=torch.tensor(eval_metrics["all_pred_probs"]),
+            k=5,
+        )
+
         plot_grad_cams(
             model=model,
             target_layers=_resolve_target_layers(model_name=model_name, model=model),
             samples=selected_samples,
+            fixed_samples=fixed_samples,
             class_names=class_names,
+            model_name=model_name,
             device=device,
         )
 
@@ -260,11 +277,16 @@ def _get_selected_samples(
     pred_label: torch.Tensor,
     pred_probs: torch.Tensor,
     k: int = 5,
+    use_seed: bool = False,
 ):
     """
     Helper function to get K random samples for each of the 4 cases: TP, FP, FN, TN called by evaluate_model_checkpoint().
     Returns: Dict with keys "TP", "FP", "FN", "TN" and values as list of tuples (image_path, label, pred_prob) for K random samples of each case.
     """
+
+    # Use a local RNG instance to avoid polluting global random state.
+    # Seed is fixed at 42 when use_seed=True for full reproducibility.
+    rng = random.Random(42 if use_seed else None)
 
     # Get the list of index for all cases
     tp_idx = torch.where((true_label == 1) & (pred_label == 1))[0]
@@ -275,16 +297,16 @@ def _get_selected_samples(
     # Randomly select K indices from above list
     # If list is of length > K then select K samples otherwise select whole list
     random_tp_idx = (
-        random.sample(tp_idx.tolist(), k) if len(tp_idx) > k else tp_idx.tolist()
+        rng.sample(tp_idx.tolist(), k) if len(tp_idx) > k else tp_idx.tolist()
     )
     random_fn_idx = (
-        random.sample(fn_idx.tolist(), k) if len(fn_idx) > k else fn_idx.tolist()
+        rng.sample(fn_idx.tolist(), k) if len(fn_idx) > k else fn_idx.tolist()
     )
     random_fp_idx = (
-        random.sample(fp_idx.tolist(), k) if len(fp_idx) > k else fp_idx.tolist()
+        rng.sample(fp_idx.tolist(), k) if len(fp_idx) > k else fp_idx.tolist()
     )
     random_tn_idx = (
-        random.sample(tn_idx.tolist(), k) if len(tn_idx) > k else tn_idx.tolist()
+        rng.sample(tn_idx.tolist(), k) if len(tn_idx) > k else tn_idx.tolist()
     )
 
     data_samples = dataloader.dataset.samples
@@ -318,3 +340,35 @@ def _build_batch(
         "pred_prob": torch.stack([pred_probs[i] for i in indices]),
         "pred_label": torch.stack([pred_label[i] for i in indices]),
     }
+
+
+def _get_fixed_samples(
+    dataloader: torch.utils.data.DataLoader,
+    pred_label: torch.Tensor,
+    pred_probs: torch.Tensor,
+    k: int = 5,
+) -> Dict[str, torch.Tensor]:
+    """
+    Selects K fixed samples from the dataset using a hardcoded seed (42).
+    The selection is independent of model predictions, so the same images
+    are chosen across all model evaluations for cross-model Grad-CAM comparison.
+
+    Args:
+        - dataloader (torch.utils.data.DataLoader): DataLoader for the evaluation dataset.
+        - pred_label (torch.Tensor): Predicted binary labels for all samples.
+        - pred_probs (torch.Tensor): Predicted probabilities for all samples.
+        - k (int): Number of fixed samples to select. Defaults to 5.
+
+    Returns:
+        - Dict[str, torch.Tensor]: Dictionary with keys "transformed_image_tensor",
+          "true_label", "pred_prob", "pred_label" for the K fixed samples.
+    """
+
+    data_samples = dataloader.dataset.samples
+    total = len(data_samples)
+
+    # Always use seed 42 so the same indices are picked regardless of model
+    rng = random.Random(42)
+    fixed_indices = rng.sample(range(total), min(k, total))
+
+    return _build_batch(fixed_indices, data_samples, pred_probs, pred_label)

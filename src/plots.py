@@ -90,6 +90,7 @@ def plot_and_log_evaluation_result(
     pr_curve: Dict[str, Any],
     roc_curve: Dict[str, Any],
     class_names: List[str],
+    model_name: str = "",
     figsize: Tuple[int, int] = (22, 6),
     active_run: Optional[wandb.sdk.wandb_run.Run] = None,
 ):
@@ -103,6 +104,7 @@ def plot_and_log_evaluation_result(
         - pr_curve (Dict): Dict with keys "precision", "recall", "thresholds" as returned by EvaluationMetrics.compute().
         - roc_curve (Dict): Dict with keys "fpr", "tpr", "thresholds" as returned by EvaluationMetrics.compute().
         - class_names (List[str]): Display labels (e.g. ["Normal", "Pneumonia"]).
+        - model_name (str): Name of the model, included in plot titles. Defaults to "".
         - figsize (Tuple[int, int]): Figure size in inches.
                                      Defaults to (22, 6).
         - active_run Optional[wandb.sdk.wandb_run.Run]: Optional active W&B run to log charts to. If None, charts will not be logged to W&B.
@@ -156,7 +158,7 @@ def plot_and_log_evaluation_result(
         ax=axes[0],
     )
 
-    axes[0].set_title("Confusion Matrix", fontsize=18, weight="bold")
+    axes[0].set_title(f"Confusion Matrix {model_name}", fontsize=18, weight="bold")
     axes[0].set_xlabel("Predicted Label", fontsize=12, weight="bold")
     axes[0].set_ylabel("True Label", fontsize=12, weight="bold")
 
@@ -170,7 +172,9 @@ def plot_and_log_evaluation_result(
 
     axes[1].fill_between(recall, precision, alpha=0.2)
 
-    axes[1].set_title("Precision-Recall Curve", fontsize=18, weight="bold")
+    axes[1].set_title(
+        f"Precision-Recall Curve {model_name}", fontsize=18, weight="bold"
+    )
     axes[1].set_xlabel("Recall", fontsize=12, weight="bold")
     axes[1].set_ylabel("Precision", fontsize=12, weight="bold")
 
@@ -195,7 +199,7 @@ def plot_and_log_evaluation_result(
 
     axes[2].fill_between(fpr, tpr, alpha=0.2)
 
-    axes[2].set_title("ROC Curve", fontsize=18, weight="bold")
+    axes[2].set_title(f"ROC Curve {model_name}", fontsize=18, weight="bold")
     axes[2].set_xlabel("False Positive Rate", fontsize=12, weight="bold")
     axes[2].set_ylabel("True Positive Rate", fontsize=12, weight="bold")
 
@@ -226,11 +230,14 @@ def plot_grad_cams(
     target_layers: List[torch.nn.Module],
     samples: Dict[str, Dict[str, torch.Tensor]],
     class_names: List[str],
+    model_name: str = "",
+    fixed_samples: Optional[Dict[str, torch.Tensor]] = None,
     device: Optional[str] = None,
     only_grad_cam: bool = False,
 ):
     """
     Plots Grad-CAM, GradCAM++, and EigenCAM for K TP, FP, FN, TN cases random samples from the dataloader. If only_grad_cam is True, only plots Grad-CAM.
+    Optionally also plots Grad-CAM for fixed samples (model-independent) for cross-model comparison.
 
     Args:
         - model (torch.nn.Module): The trained model for which Grad-CAM is to be computed.
@@ -241,7 +248,9 @@ def plot_grad_cams(
             - "true_label": Tensor of shape (K,) containing the true labels for the samples.
             - "pred_prob": Tensor of shape (K,) containing the predicted probabilities for the positive class for the samples.
         - class_names (List[str]): List of class names corresponding to the labels.
-        - k (int): The number of random samples to plot for each case (TP, FP, FN, TN). Defaults to 5.
+        - model_name (str): Name of the model, included in plot titles. Defaults to "".
+        - fixed_samples (Optional[Dict[str, torch.Tensor]]): Dictionary containing fixed (model-independent) samples for cross-model Grad-CAM comparison.
+          Expected keys: "transformed_image_tensor", "true_label", "pred_prob", "pred_label". If None, fixed sample plot is skipped. Defaults to None.
         - device (str, optional): The device to run the computations on (e.g., "cuda" or "cpu"). If None, automatically selects "cuda" if available. Defaults to None.
         - only_grad_cam (bool): If True, only plots Grad-CAM. If False, plots Grad-CAM, GradCAM++, and EigenCAM. Defaults to False.
     """
@@ -271,7 +280,20 @@ def plot_grad_cams(
     plot_gradcam_samples(
         samples=samples_copy,
         class_names=class_names,
+        model_name=model_name,
     )
+
+    # Plot Grad-CAM for fixed (model-independent) samples for cross-model comparison
+    if fixed_samples is not None:
+        fixed_samples_copy = fixed_samples.copy()
+        fixed_samples_copy["grad_cam"] = _calculate_grad_cam(
+            cam, fixed_samples_copy["transformed_image_tensor"]
+        )
+        plot_gradcam_fixed_samples(
+            samples=fixed_samples_copy,
+            class_names=class_names,
+            model_name=model_name,
+        )
 
 
 def _calculate_grad_cam(cam: GradCAM, input_tensor: torch.Tensor) -> torch.Tensor:
@@ -288,6 +310,7 @@ def _calculate_grad_cam(cam: GradCAM, input_tensor: torch.Tensor) -> torch.Tenso
 def plot_gradcam_samples(
     samples: Dict[str, Dict[str, torch.Tensor]],
     class_names: List[str],
+    model_name: str = "",
     figsize_scale: Tuple[int, int] = (5, 4),
 ):
     """
@@ -330,7 +353,7 @@ def plot_gradcam_samples(
     )
 
     fig.suptitle(
-        "GradCAM Visualization of Samples",
+        f"GradCAM Visualization of Samples {model_name}",
         fontsize=25,
         fontweight="bold",
         y=1.02,
@@ -437,6 +460,140 @@ def plot_gradcam_samples(
             )
 
             cam_ax.axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_gradcam_fixed_samples(
+    samples: Dict[str, torch.Tensor],
+    class_names: List[str],
+    model_name: str = "",
+    figsize_scale: Tuple[int, int] = (5, 4),
+):
+    """
+    Plot GradCAM visualizations for fixed (model-independent) samples.
+    These samples are identical across all model evaluations, enabling
+    direct cross-model Grad-CAM comparison.
+
+    Expected structure:
+    samples = {
+        "transformed_image_tensor": Tensor[K, C, H, W],
+        "true_label": Tensor[K],
+        "pred_label": Tensor[K],
+        "pred_prob": Tensor[K],
+        "grad_cam": Tensor/ndarray[K, H, W]
+    }
+
+    Args:
+        - samples (Dict[str, torch.Tensor]): Dictionary with keys "transformed_image_tensor",
+          "true_label", "pred_label", "pred_prob", and "grad_cam".
+        - class_names (List[str]): List of class names corresponding to the labels.
+        - figsize_scale (Tuple[int, int]): Scale factors for figure width and height per subplot. Defaults to (5, 4).
+    """
+
+    print(
+        "\n[INFO] Plotting Grad-CAM visualizations for fixed cross-model comparison samples...\n"
+    )
+
+    sns.set_theme(style="white")
+
+    images = samples["transformed_image_tensor"]
+    true_labels = samples["true_label"]
+    pred_labels = samples["pred_label"]
+    pred_probs = samples["pred_prob"]
+    gradcams = samples["grad_cam"]
+
+    num_samples = images.shape[0]
+
+    # 2 columns per sample -> Original + GradCAM
+    total_cols = num_samples * 2
+
+    fig, axes = plt.subplots(
+        nrows=1,
+        ncols=total_cols,
+        figsize=(total_cols * figsize_scale[0], 1 * figsize_scale[1]),
+        squeeze=False,
+    )
+
+    fig.suptitle(
+        f"GradCAM — Fixed Samples (Cross-Model Comparison) {model_name}",
+        fontsize=25,
+        fontweight="bold",
+        y=1.02,
+    )
+
+    for sample_idx in range(num_samples):
+        orig_ax = axes[0, sample_idx * 2]
+        cam_ax = axes[0, sample_idx * 2 + 1]
+
+        single_img = images[sample_idx]
+        grayscale_cam = gradcams[sample_idx]
+
+        if torch.is_tensor(grayscale_cam):
+            grayscale_cam = grayscale_cam.detach().cpu().numpy()
+
+        true_label = int(true_labels[sample_idx].item())
+        pred_label = int(pred_labels[sample_idx].item())
+        pred_prob = float(pred_probs[sample_idx].item())
+
+        # Denormalized image
+        denorm_img = denormalize(single_img)
+
+        # GradCAM overlay
+        cam_image = show_cam_on_image(
+            denorm_img,
+            grayscale_cam,
+            use_rgb=True,
+        )
+
+        metadata_text = (
+            f"Actual: {class_names[true_label]}\n"
+            f"Predicted: {class_names[pred_label]}\n"
+            f"Prediction Probability: {pred_prob:.3f}"
+        )
+
+        # ---------------- ORIGINAL ----------------
+        orig_ax.imshow(denorm_img)
+
+        orig_ax.set_title(
+            "Original",
+            fontsize=14,
+            fontweight="bold",
+        )
+
+        orig_ax.text(
+            0.5,
+            -0.12,
+            metadata_text,
+            fontsize=11,
+            ha="center",
+            va="top",
+            transform=orig_ax.transAxes,
+        )
+
+        orig_ax.axis("off")
+
+        # ---------------- GRADCAM ----------------
+        cam_ax.imshow(cam_image)
+
+        cam_ax.set_title(
+            "GradCAM",
+            fontsize=14,
+            fontweight="bold",
+        )
+
+        cam_ax.text(
+            0.5,
+            -0.12,
+            metadata_text,
+            fontsize=11,
+            ha="center",
+            va="top",
+            transform=cam_ax.transAxes,
+        )
+
+        cam_ax.axis("off")
 
     plt.tight_layout()
     plt.show()
