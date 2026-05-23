@@ -295,7 +295,7 @@ def run_experiment(
     pos_weight_resolved = torch.tensor(pos_weight, device=device, dtype=torch.float32)
 
     # LOSS FUNCTION---------------------
-    loss_fn = _loss_fn(name="binary_ce", pos_weight=pos_weight_resolved)
+    loss_fn = create_loss_fn(name="binary_ce", pos_weight=pos_weight_resolved)
 
     # Case A and B
     # feature extraction --> fine tune if ft_epochs given
@@ -425,7 +425,7 @@ def run_experiment(
 ## Helper functions ---------------------
 
 
-def _loss_fn(name="binary_ce", pos_weight: Optional[float] = None):
+def create_loss_fn(name="binary_ce", pos_weight: Optional[float] = None):
     """
     Creates and returns the loss function based on the given name.
 
