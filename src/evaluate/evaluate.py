@@ -263,7 +263,7 @@ def _resolve_target_layers(
         "resnet50": lambda m: [m.layer4[-1]],
         "densenet121": lambda m: [m.features.denseblock4],
         "efficientnet_b2": lambda m: [m.features[-1]],
-        "vit_b_16": lambda m: [m.blocks[-1].norm1],
+        "vit_b_16": lambda m: [m.encoder.layers.encoder_layer_11.ln_1],
     }
 
     if model_name in target_layer_resolvers:
