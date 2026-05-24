@@ -66,9 +66,6 @@ def evaluate_model_checkpoint(
         or f"eval_{model_checkpoint_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     )
 
-    # Short run name to 62 chars if it exceeds W&B limit of 64 chars when combined with tags and other auto-generated parts.
-    run_name = run_name if len(run_name) <= 64 else run_name[:64]
-
     print(f"\n{'-' * 80}")
 
     print(f"PHASE — Evaluating  |  {model_name}")
@@ -121,9 +118,8 @@ def evaluate_model_checkpoint(
             # setup extra imp. wandb tags
             extra_wandb_tags = [
                 "evaluation",
-                str(model_checkpoint_name),
                 model_name,
-                model_checkpoint_name,
+                model_checkpoint_name[:64],  # W&B tags must be ≤ 64 chars
             ]
 
             # W&B initializations
