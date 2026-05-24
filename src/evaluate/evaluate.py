@@ -157,6 +157,8 @@ def evaluate_model_checkpoint(
             roc_curve=eval_metrics["roc_curve"],
             class_names=class_names,
             model_name=model_name,
+            true_labels=eval_metrics["all_true_labels"],
+            pred_probs=eval_metrics["all_pred_probs"],
             active_run=wandb.run if log_to_wandb else None,
         )
 
@@ -190,6 +192,7 @@ def evaluate_model_checkpoint(
             class_names=class_names,
             model_name=model_name,
             device=device,
+            active_run=wandb.run if log_to_wandb else None,
         )
 
     finally:

@@ -92,6 +92,8 @@ def plot_and_log_evaluation_result(
     class_names: List[str],
     model_name: str = "",
     figsize: Tuple[int, int] = (22, 6),
+    true_labels: Optional[List[int]] = None,
+    pred_probs: Optional[List[float]] = None,
     active_run: Optional[wandb.sdk.wandb_run.Run] = None,
 ):
     """
@@ -107,11 +109,14 @@ def plot_and_log_evaluation_result(
         - model_name (str): Name of the model, included in plot titles. Defaults to "".
         - figsize (Tuple[int, int]): Figure size in inches.
                                      Defaults to (22, 6).
+        - true_labels (List[int], optional): List of true labels for the samples. Required if active_run is provided for W&B logging. Defaults to None.
+        - pred_probs (List[float], optional): List of predicted probabilities for the samples. Required if active_run is provided for W&B logging. Defaults to None.
         - active_run Optional[wandb.sdk.wandb_run.Run]: Optional active W&B run to log charts to. If None, charts will not be logged to W&B.
                                                         Defaults to None.
 
     Raises:
         - ValueError: If pr_curve or roc_curve dicts are missing required keys.
+        - ValueError: If active_run is provided but true_labels or pred_probs are missing.
     """
 
     # Validate weather given pr_curve and roc_curve dicts have the required keys
@@ -126,6 +131,13 @@ def plot_and_log_evaluation_result(
         raise ValueError(
             f"roc_curve dict is missing required keys. Required keys: {required_roc_keys}. Given keys: {roc_curve.keys()}"
         )
+
+    # If active_run is provided, validate that true_labels and pred_probs are also provided for W&B logging
+    if active_run is not None:
+        if true_labels is None or pred_probs is None:
+            raise ValueError(
+                "If active_run is provided for W&B logging, true_labels and pred_probs must also be provided."
+            )
 
     print("\n[INFO] Plotting Confusion Matrix, PR Curve, and ROC Curve...\n")
 
@@ -220,9 +232,78 @@ def plot_and_log_evaluation_result(
         print("\n[INFO] No active W&B run provided. Skipping logging plots to W&B.\n")
         return
 
-    print(f"\n[INFO] Logging plots to W&B run: {active_run.name}...\n")
+    log_plots_to_wandb(
+        pr_auc=pr_auc,
+        roc_auc=roc_auc,
+        evaluation_fig=fig,
+        true_labels=true_labels,
+        pred_probs=pred_probs,
+        class_names=class_names,
+        active_run=active_run,
+    )
 
-    # !! TODO: log to wandb
+    print(f"\n[INFO] Logged plots to W&B run: {active_run.name}...\n")
+
+
+def log_plots_to_wandb(
+    pr_auc: float,
+    roc_auc: float,
+    evaluation_fig: plt.Figure,
+    true_labels: List[int],
+    pred_probs: List[float],
+    class_names: List[str],
+    active_run: wandb.run,
+) -> None:
+    """
+    Plots the evaluation figure (confusion matrix, PR curve, ROC curve) to W&B and logs scalar metrics (PR AUC and ROC AUC) to the active W&B run for main visualization. Also logs PR Curve and ROC Curve using wandb.plot.pr_curve and wandb.plot.roc_curve for interactive visualization in W&B.
+
+    Args:
+        - pr_auc (float): Area Under the Precision-Recall Curve.
+        - roc_auc (float): Area Under the ROC Curve.
+        - evaluation_fig (plt.Figure): Matplotlib figure containing the confusion matrix, PR curve, and ROC curve.
+        - true_labels (List[int]): List of true labels for the samples.
+        - pred_probs (List[float]): List of predicted probabilities for the samples.
+        - class_names (List[str]): List of class names corresponding to the labels.
+        - active_run (wandb.run): Active W&B run to log charts to.
+    """
+
+    active_run.log(
+        {
+            # Entire evaluation panel
+            "evaluation/evaluation_plots": wandb.Image(evaluation_fig),
+            # Scalar metrics
+            "evaluation/roc_auc": roc_auc,
+            "evaluation/pr_auc": pr_auc,
+        }
+    )
+
+    # wandb.plot.pr_curve / roc_curve expect y_probas as a 2D array of
+    # shape (n_samples, n_classes). pred_probs is the probability for the
+    # positive class (1D), so stack [1-p, p] to build the required shape.
+    pred_probs_arr = np.array(pred_probs)
+    y_probas_2d = np.column_stack([1 - pred_probs_arr, pred_probs_arr])
+
+    # Log PR Curve
+    active_run.log(
+        {
+            "evaluation/pr_curve": wandb.plot.pr_curve(
+                y_true=true_labels,
+                y_probas=y_probas_2d,
+                labels=class_names,
+            )
+        }
+    )
+
+    # Log ROC Curve
+    active_run.log(
+        {
+            "evaluation/roc_curve": wandb.plot.roc_curve(
+                y_true=true_labels,
+                y_probas=y_probas_2d,
+                labels=class_names,
+            )
+        }
+    )
 
 
 def plot_grad_cams(
@@ -234,6 +315,7 @@ def plot_grad_cams(
     fixed_samples: Optional[Dict[str, torch.Tensor]] = None,
     device: Optional[str] = None,
     only_grad_cam: bool = False,
+    active_run: Optional[wandb.sdk.wandb_run.Run] = None,
 ):
     """
     Plots Grad-CAM, GradCAM++, and EigenCAM for K TP, FP, FN, TN cases random samples from the dataloader. If only_grad_cam is True, only plots Grad-CAM.
@@ -262,10 +344,18 @@ def plot_grad_cams(
     model.eval()
 
     # Initialize Grad-CAM with the model and target layers
-    cam = GradCAM(
-        model=model,
-        target_layers=target_layers,
-    )
+    # For ViT, use vit_reshape_transform to reshape the feature maps for Grad-CAM
+    if model_name.lower() == "vit_b_16":
+        cam = GradCAM(
+            model=model,
+            target_layers=target_layers,
+            reshape_transform=vit_reshape_transform,
+        )
+    else:
+        cam = GradCAM(
+            model=model,
+            target_layers=target_layers,
+        )
 
     # Copy the sample dictionary to avoid modifying the original
     samples_copy = samples.copy()
@@ -293,6 +383,7 @@ def plot_grad_cams(
             samples=fixed_samples_copy,
             class_names=class_names,
             model_name=model_name,
+            active_run=active_run,
         )
 
 
@@ -470,11 +561,11 @@ def plot_gradcam_fixed_samples(
     class_names: List[str],
     model_name: str = "",
     figsize_scale: Tuple[int, int] = (5, 4),
+    active_run: Optional[wandb.sdk.wandb_run.Run] = None,
 ):
     """
-    Plot GradCAM visualizations for fixed (model-independent) samples.
-    These samples are identical across all model evaluations, enabling
-    direct cross-model Grad-CAM comparison.
+    Plot GradCAM visualizations for fixed (model-independent) samples. These samples are identical across all model evaluations, enabling direct cross-model Grad-CAM comparison.
+    Also logs the figure to W&B if active_run is provided.
 
     Expected structure:
     samples = {
@@ -490,6 +581,7 @@ def plot_gradcam_fixed_samples(
           "true_label", "pred_label", "pred_prob", and "grad_cam".
         - class_names (List[str]): List of class names corresponding to the labels.
         - figsize_scale (Tuple[int, int]): Scale factors for figure width and height per subplot. Defaults to (5, 4).
+        - active_run (Optional[wandb.sdk.wandb_run.Run]): W&B run object for logging the figure. Defaults to None.
     """
 
     print(
@@ -597,3 +689,158 @@ def plot_gradcam_fixed_samples(
 
     plt.tight_layout()
     plt.show()
+
+    # Log to W&B if active run is provided
+    if active_run is not None:
+        log_gradcam_fixed_samples_wandb(
+            samples=samples,
+            class_names=class_names,
+            model_name=model_name,
+            active_run=active_run,
+        )
+
+
+def log_gradcam_fixed_samples_wandb(
+    samples: Dict[str, torch.Tensor],
+    class_names: List[str],
+    model_name: str = "",
+    figsize: Tuple[int, int] = (8, 4),
+    active_run: Optional[wandb.sdk.wandb_run.Run] = None,
+):
+    """
+    Log the GradCAM visualizations for fixed cross-model comparison samples into W&B only.
+
+    Each sample is logged separately:
+        eval_gradcam/sample_1
+        eval_gradcam/sample_2
+        ...
+    """
+
+    sns.set_theme(style="white")
+
+    images = samples["transformed_image_tensor"]
+    true_labels = samples["true_label"]
+    pred_labels = samples["pred_label"]
+    pred_probs = samples["pred_prob"]
+    gradcams = samples["grad_cam"]
+
+    num_samples = images.shape[0]
+
+    print(f"\n[INFO] Plotting and logging {num_samples} GradCAM samples...\n")
+
+    for sample_idx in range(num_samples):
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+        single_img = images[sample_idx]
+        grayscale_cam = gradcams[sample_idx]
+
+        if torch.is_tensor(grayscale_cam):
+            grayscale_cam = grayscale_cam.detach().cpu().numpy()
+
+        true_label = int(true_labels[sample_idx].item())
+        pred_label = int(pred_labels[sample_idx].item())
+        pred_prob = float(pred_probs[sample_idx].item())
+        status = "Correct" if true_label == pred_label else "Incorrect"
+
+        denorm_img = denormalize(single_img)
+
+        cam_image = show_cam_on_image(
+            denorm_img,
+            grayscale_cam,
+            use_rgb=True,
+        )
+
+        metadata_text = (
+            f"Actual: {class_names[true_label]}\n"
+            f"Predicted: {class_names[pred_label]}\n"
+            f"Probability: {pred_prob:.3f}\n"
+            f"Status: {status}"
+        )
+
+        axes[0].imshow(denorm_img)
+
+        axes[0].set_title(
+            "Original",
+            fontsize=14,
+            fontweight="bold",
+        )
+
+        axes[0].text(
+            0.5,
+            -0.15,
+            metadata_text,
+            fontsize=10,
+            ha="center",
+            va="top",
+            transform=axes[0].transAxes,
+        )
+
+        axes[0].axis("off")
+
+        axes[1].imshow(cam_image)
+
+        axes[1].set_title(
+            "GradCAM",
+            fontsize=14,
+            fontweight="bold",
+        )
+
+        axes[1].text(
+            0.5,
+            -0.15,
+            metadata_text,
+            fontsize=10,
+            ha="center",
+            va="top",
+            transform=axes[1].transAxes,
+        )
+
+        axes[1].axis("off")
+
+        fig.suptitle(
+            f"GradCAM Sample {sample_idx + 1} — {model_name}",
+            fontsize=16,
+            fontweight="bold",
+        )
+
+        plt.tight_layout()
+
+        # Log to W&B if active run is provided
+        if active_run is not None:
+            active_run.log({f"eval_gradcam/sample_{sample_idx + 1}": wandb.Image(fig)})
+
+        plt.close(fig)
+
+    print("\n[INFO] GradCAM samples logged successfully.\n")
+
+
+def vit_reshape_transform(
+    tensor: torch.Tensor,
+    height: int = 14,
+    width: int = 14,
+) -> torch.Tensor:
+    """
+    Reshape transform function for ViT models to be used with Grad-CAM.
+
+    Args:
+        - tensor (torch.Tensor): Input tensor of shape (batch_size, num_tokens, feature_dim).
+        - height (int): Height of the feature map. Defaults to 14.
+        - width (int): Width of the feature map. Defaults to 14.
+
+    Input shape: [B, 197, C]
+    Output shape: [B, C, 14, 14]
+
+    The first token is the class token, and the remaining 196 tokens correspond to a 14x14 grid of patches (since 14*14=196). We discard the class token and reshape the remaining tokens into a 2D feature map.
+    """
+
+    # remove CLS token
+    tensor = tensor[:, 1:, :]
+
+    result = tensor.reshape(  # reshape to [B, 14, 14, C]
+        tensor.shape[0],  # batch size
+        height,
+        width,
+        tensor.shape[2],  # feature dimension
+    )
+
+    return result.permute(0, 3, 1, 2)  # [B, C, H, W]
